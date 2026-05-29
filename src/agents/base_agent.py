@@ -1,10 +1,9 @@
-"""Agent 抽象基类。
-
-所有 Agent 继承 BaseAgent 并实现 `run(state) -> state` 方法。
-"""
+"""Agent 抽象基类。"""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -12,23 +11,34 @@ if TYPE_CHECKING:
 
 
 class BaseAgent(ABC):
-    """统一 Agent 接口。"""
-
-    #: Agent 名称，会写入 message.agent_name 字段用于追溯
     name: str = "base"
-
-    #: 该 Agent 使用的 prompt 文件名（位于 config/prompts/）
     prompt_file: str | None = None
+
+    def _render_prompt(self, **kw) -> str:
+        if not self.prompt_file:
+            raise ValueError(f"{self.name}: prompt_file not set")
+        path = Path(__file__).resolve().parents[2] / "config" / "prompts" / self.prompt_file
+        template = path.read_text(encoding="utf-8")
+        return template.format(**kw)
+
+    def _append_message(self, state: "GraphState", role: str, content: str) -> None:
+        msgs = state.setdefault("messages", [])
+        msgs.append({"role": role, "agent_name": self.name if role == "assistant" else "",
+                     "content": content, "created_at": datetime.utcnow().isoformat()})
+
+    def _get_llm(self):
+        from src.llm.deepseek_client import DeepSeekClient
+        from src.utils.config_loader import load_settings
+        cfg = load_settings()["llm"]
+        return DeepSeekClient(
+            api_key=cfg.get("api_key", ""),
+            base_url=cfg.get("base_url", "https://api.deepseek.com/v1"),
+            model=cfg.get("model", "deepseek-chat"),
+            temperature=cfg.get("temperature", 0.3),
+            max_tokens=cfg.get("max_tokens", 2048),
+        )
 
     @abstractmethod
     def run(self, state: "GraphState") -> "GraphState":
-        """处理 state 并返回新的 state。
-
-        每个 Agent 应当：
-        1. 从 state 读取必要字段
-        2. 调用 LLM / RAG / DB / Tools 完成任务
-        3. 把回复写入 state['agent_response']
-        4. 在 state['messages'] 追加 assistant message
-        5. 返回 state
-        """
         raise NotImplementedError
+

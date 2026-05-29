@@ -1,24 +1,26 @@
-"""汇率换算工具。
-
-外部 API 不可用时回退到 settings.tools.currency.fallback_rates 静态表。
-"""
+"""汇率换算工具（静态降级表，demo 不挂网）。"""
 from __future__ import annotations
-
-# from langchain_core.tools import tool
 
 from .registry import registry
 
 
-# @tool
-# @registry.register
 def currency_convert(amount: float, from_currency: str, to_currency: str) -> dict:
-    """将 amount 从 from_currency 换算为 to_currency。
+    """将 amount 从 from_currency 换算为 to_currency。"""
+    from src.utils.config_loader import load_settings
+    rates: dict = load_settings()["tools"]["currency"]["fallback_rates"]
+    key = f"{from_currency.upper()}_{to_currency.upper()}"
+    rev_key = f"{to_currency.upper()}_{from_currency.upper()}"
+    if key in rates:
+        rate = rates[key]
+    elif rev_key in rates:
+        rate = 1.0 / rates[rev_key]
+    elif from_currency.upper() == to_currency.upper():
+        rate = 1.0
+    else:
+        rate = 1.0  # 未知组合，原样返回
+    return {"amount": round(amount * rate, 2), "from": from_currency, "to": to_currency,
+            "rate": rate, "source": "fallback"}
 
-    Returns:
-        {"amount": float, "from": str, "to": str, "rate": float, "source": "api"|"fallback"}
-    """
-    # TODO:
-    # 1. 优先调用外部 API（用 EXCHANGE_RATE_API_KEY）
-    # 2. API 不可用时使用 fallback_rates
-    # 3. 返回结构化 dict
-    raise NotImplementedError
+
+registry.register(currency_convert)
+
