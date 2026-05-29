@@ -1,30 +1,68 @@
-"""ChatService — UI 与 LangGraph 之间的入口。
-
-UI 把用户输入交给 ChatService.handle()，由其包装为 GraphState 并触发 supervisor。
-"""
+"""ChatService — UI 与 LangGraph 之间的唯一入口。"""
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 
+@lru_cache(maxsize=1)
+def _get_graph():
+    from src.graph.supervisor import build_supervisor_graph
+    return build_supervisor_graph()
+
+
 class ChatService:
-    def __init__(self):
-        # TODO: build_supervisor_graph() 缓存编译后的 graph
-        self._graph = None
+    def send_message(self, user_id: int, conversation_id: int | None,
+                     user_input: str) -> dict[str, Any]:
+        from src.db.engine import get_engine
+        from src.db.repositories.conversation_repo import ConversationRepository
 
-    def handle(self, user_id: int, conversation_id: int, user_input: str) -> dict[str, Any]:
-        """处理一轮对话。
+        repo = ConversationRepository(engine=get_engine())
+        if conversation_id is None:
+            conversation_id = repo.start(user_id)
 
-        Returns:
-            {agent_response: str, agent_name: str, task_type: str, ...}
-        """
-        # TODO:
-        # 1. 构造 GraphState（含 messages 历史）
-        # 2. self._graph.invoke(state)
-        # 3. 返回展示所需字段
-        raise NotImplementedError
+        # 加载历史消息
+        history = repo.list_messages(conversation_id)
+        state = {
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "user_input": user_input,
+            "user_profile": {},
+            "memory_enabled": True,
+            "messages": [
+                {"role": m["role"], "agent_name": m.get("agent_name", ""),
+                 "content": m["content"], "created_at": str(m.get("created_at", ""))}
+                for m in history
+            ],
+        }
+
+        # 持久化用户消息
+        repo.add_message(conversation_id, "user", user_input)
+
+        # 运行 graph
+        result = _get_graph().invoke(state)
+
+        reply = result.get("agent_response", "")
+        agent_name = ""
+        for m in reversed(result.get("messages", [])):
+            if m.get("role") == "assistant":
+                agent_name = m.get("agent_name", "")
+                break
+
+        # 持久化 assistant 消息
+        if reply:
+            repo.add_message(conversation_id, "assistant", reply, agent_name=agent_name)
+
+        return {
+            "conversation_id": conversation_id,
+            "agent_response": reply,
+            "agent_name": agent_name,
+            "task_type": result.get("task_type", ""),
+        }
 
     def clear_conversation(self, user_id: int) -> None:
-        """清空对话 + 用户画像（受 memory_enabled 约束，但清空时强制清除）。"""
-        # TODO: ConversationRepository.clear + UserRepository.clear_profile
-        raise NotImplementedError
+        from src.db.engine import get_engine
+        from src.db.repositories.conversation_repo import ConversationRepository
+        from src.db.repositories.user_repo import UserRepository
+        ConversationRepository(engine=get_engine()).clear(user_id)
+        UserRepository(engine=get_engine()).clear_profile(user_id)

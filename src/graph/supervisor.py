@@ -1,52 +1,58 @@
-"""顶层 supervisor 图组装。
-
-详见 DEV_SPEC.md 4.1 节整体架构图。
-
-流程：
-    user_input
-        -> pre_hook
-        -> task_classifier
-        -> conditional edge by task_type:
-            - reject: -> reject_node -> END
-            - consultant: -> consultant_agent -> post_hook -> END
-            - school: -> school_selection_agent -> post_hook -> END
-            - appointment: -> appointment_subgraph -> post_hook -> END
-            - behavior: -> user_behavior_agent (display) -> END
-"""
+"""顶层 supervisor 图组装。"""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from functools import lru_cache
 
-if TYPE_CHECKING:
-    pass
+from langgraph.graph import END, StateGraph
+
+from src.graph.state import GraphState
 
 
+def _reject_node(state: GraphState) -> GraphState:
+    reply = "抱歉，我是申研选校助手，仅能协助选校咨询、预约老师和相关问题解答。"
+    state["agent_response"] = reply
+    msgs = state.setdefault("messages", [])
+    from datetime import datetime
+    msgs.append({"role": "assistant", "agent_name": "reject",
+                 "content": reply, "created_at": datetime.utcnow().isoformat()})
+    return state
+
+
+def _route(state: GraphState) -> str:
+    return state.get("task_type", "reject")
+
+
+@lru_cache(maxsize=1)
 def build_supervisor_graph():
-    """构建并编译 LangGraph StateGraph。
+    from src.agents.appointment_agent import AppointmentAgent
+    from src.agents.consultant_agent import ConsultantAgent
+    from src.agents.school_selection_agent import SchoolSelectionAgent
+    from src.agents.task_classifier import TaskClassifier
+    from src.agents.user_behavior_agent import UserBehaviorAgent
+    from src.graph.hooks import post_hook, pre_hook
 
-    Returns:
-        编译后的 graph 实例，调用 .invoke(state) 即可运行。
-    """
-    # TODO:
-    # from langgraph.graph import StateGraph, END
-    # from src.graph.state import GraphState
-    # from src.graph.hooks import pre_hook, post_hook
-    # from src.agents.task_classifier import TaskClassifier
-    # ...
-    #
-    # graph = StateGraph(GraphState)
-    # graph.add_node("pre_hook", pre_hook)
-    # graph.add_node("classifier", TaskClassifier().run)
-    # graph.add_node("consultant", ConsultantAgent().run)
-    # ...
-    # graph.add_edge("pre_hook", "classifier")
-    # graph.add_conditional_edges("classifier", route_by_task_type, {...})
-    # graph.set_entry_point("pre_hook")
-    # return graph.compile()
-    raise NotImplementedError
+    g = StateGraph(GraphState)
+    g.add_node("pre_hook", pre_hook)
+    g.add_node("classifier", TaskClassifier().run)
+    g.add_node("consultant", ConsultantAgent().run)
+    g.add_node("school", SchoolSelectionAgent().run)
+    g.add_node("appointment", AppointmentAgent().run)
+    g.add_node("behavior", UserBehaviorAgent().run)
+    g.add_node("reject", _reject_node)
+    g.add_node("post_hook", post_hook)
 
+    g.set_entry_point("pre_hook")
+    g.add_edge("pre_hook", "classifier")
+    g.add_conditional_edges("classifier", _route, {
+        "consultant": "consultant",
+        "school": "school",
+        "appointment": "appointment",
+        "behavior": "behavior",
+        "reject": "reject",
+    })
+    for expert in ("consultant", "school", "appointment", "behavior"):
+        g.add_edge(expert, "post_hook")
+    g.add_edge("post_hook", END)
+    g.add_edge("reject", END)
 
-def route_by_task_type(state: dict) -> str:
-    """conditional edge 路由函数。"""
-    # TODO: return state['task_type']
-    raise NotImplementedError
+    return g.compile()
