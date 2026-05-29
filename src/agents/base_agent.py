@@ -19,7 +19,10 @@ class BaseAgent(ABC):
             raise ValueError(f"{self.name}: prompt_file not set")
         path = Path(__file__).resolve().parents[2] / "config" / "prompts" / self.prompt_file
         template = path.read_text(encoding="utf-8")
-        return template.format(**kw)
+        # 用简单字符串替换，避免 .format() 把 JSON 示例里的 {} 当占位符
+        for key, val in kw.items():
+            template = template.replace("{" + key + "}", str(val))
+        return template
 
     def _append_message(self, state: "GraphState", role: str, content: str) -> None:
         msgs = state.setdefault("messages", [])

@@ -17,7 +17,7 @@ class ChatService:
         from src.db.engine import get_engine
         from src.db.repositories.conversation_repo import ConversationRepository
 
-        repo = ConversationRepository(engine=get_engine())
+        repo = ConversationRepository()
         if conversation_id is None:
             conversation_id = repo.start(user_id)
 

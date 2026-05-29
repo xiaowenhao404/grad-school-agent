@@ -15,4 +15,4 @@
 【本轮用户输入】
 {user_input}
 
-请只输出一个英文小写词：consultant / school / appointment / behavior / reject
+请只输出一个英文小写词（JSON格式）：{"task_type": "consultant"} 或 {"task_type": "school"} 或 {"task_type": "appointment"} 或 {"task_type": "behavior"} 或 {"task_type": "reject"}

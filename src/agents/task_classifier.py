@@ -27,14 +27,14 @@ class TaskClassifier(BaseAgent):
             user_input=state.get("user_input", ""),
         )
         llm = self._get_llm()
-        resp = llm.chat(
-            [{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
-        try:
-            task_type = json.loads(resp["content"]).get("task_type", "reject").strip().lower()
-        except Exception:
-            task_type = "reject"
+        resp = llm.chat([{"role": "user", "content": prompt}])
+        content = resp["content"].lower()
+        import re
+        task_type = "reject"
+        for t in VALID_TASK_TYPES:
+            if t in content:
+                task_type = t
+                break
         if task_type not in VALID_TASK_TYPES:
             task_type = "reject"
         state["task_type"] = task_type
