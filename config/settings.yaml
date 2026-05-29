@@ -11,6 +11,7 @@ llm:
 embedding:
   provider: local               # local | qwen | openai
   model: BAAI/bge-small-zh-v1.5
+  local_model_name: ./models/bge-small-zh-v1.5
   dimension: 512
   batch_size: 32
 

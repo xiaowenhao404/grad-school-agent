@@ -35,6 +35,7 @@ def _upsert_to_chroma(chunks: list[Document], collection_name: CollectionName) -
         model=cfg.get("model", ""),
         api_key=cfg.get("api_key"),
         base_url=cfg.get("base_url"),
+        local_model_name=cfg.get("local_model_name"),
         batch_size=cfg.get("batch_size", 32),
     )
     col = get_collection(collection_name)

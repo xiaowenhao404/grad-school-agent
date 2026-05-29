@@ -110,6 +110,7 @@ outputs/
 checkpoints/
 wandb/
 mlruns/
+models/
 
 # ============================================
 # 文档构建
