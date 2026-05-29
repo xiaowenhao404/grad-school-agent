@@ -1,0 +1,67 @@
+# Grad-School-Agent 主配置文件
+# 环境敏感字段（API key 等）从 .env 读取，本文件只放结构/默认参数
+
+llm:
+  provider: deepseek           # deepseek | openai | qwen | local
+  model: deepseek-chat
+  temperature: 0.3
+  max_tokens: 2048
+  timeout: 60                  # 秒
+
+embedding:
+  provider: local               # local | qwen | openai
+  model: BAAI/bge-small-zh-v1.5
+  dimension: 512
+  batch_size: 32
+
+vector_store:
+  backend: chroma
+  persist_path: ./data/chroma
+  collections:
+    schools: schools
+    teachers: teachers
+    internal_docs: internal_docs
+
+retrieval:
+  splitter:
+    chunk_size: 500
+    chunk_overlap: 50
+  hybrid:
+    enabled: true
+    top_k_dense: 20
+    top_k_sparse: 20
+    top_k_final: 5
+    rrf_k: 60                  # RRF 融合常数 k
+  filters:
+    apply_pre_filter: true     # 选校时 SQL 预过滤
+
+db:
+  path: ./data/grad_school.db
+  echo_sql: false              # 开发期可设 true
+
+agents:
+  task_classifier:
+    reject_threshold: 0.5      # 分类置信度低于此值归为 reject
+  appointment:
+    max_candidate_teachers: 3
+    max_slots_per_teacher: 5
+  user_behavior:
+    default_memory_enabled: true
+    async_update: true
+
+tools:
+  currency:
+    fallback_rates:            # 外部 API 不可用时的静态降级表
+      USD_CNY: 7.20
+      GBP_CNY: 9.00
+      EUR_CNY: 7.80
+  weather:
+    enabled: true
+
+ui:
+  page_title: "申研选校助手"
+  default_user_id: 1           # demo 单用户
+
+logging:
+  level: INFO
+  file: ./logs/app.log

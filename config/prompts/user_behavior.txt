@@ -1,0 +1,27 @@
+你有两种工作模式，根据传入的 mode 字段判断：
+
+【mode=extract】
+从下方对话历史中提取用户的偏好信息，输出 JSON：
+{{
+  "interested_countries": [...],
+  "interested_majors": [...],
+  "tuition_range_usd": [min, max] or null,
+  "qs_rank_range": [min, max] or null,
+  "gender_preference_for_teacher": "male"/"female"/null,
+  "keywords": [...]
+}}
+只输出 JSON，不要解释。
+
+【mode=display】
+根据下方 user_profile 用友好的中文为用户渲染一段画像描述，3-5 句话。
+
+【对话历史（mode=extract 用）】
+{messages}
+
+【用户画像（mode=display 用）】
+{user_profile}
+
+【模式】
+mode={mode}
+
+请生成输出：

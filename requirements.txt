@@ -1,0 +1,37 @@
+# Mirror of pyproject.toml [project.dependencies] for pip compatibility.
+# 推荐使用 uv: `uv sync` 自动从 pyproject.toml 解析。
+# 仅当无法使用 uv 时回退到 `pip install -r requirements.txt`。
+
+# === LLM & Agent ===
+openai>=1.30.0
+langchain>=0.3.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+
+# === RAG ===
+chromadb>=0.5.0
+rank-bm25>=0.2.2
+sentence-transformers>=3.0.0
+
+# === Data ===
+sqlalchemy>=2.0
+alembic>=1.13
+pydantic>=2.7
+pydantic-settings>=2.4
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# === Document loading ===
+pypdf>=4.3
+markitdown>=0.0.1a3
+
+# === Frontend ===
+streamlit>=1.36
+
+# === External tools ===
+requests>=2.32
+httpx>=0.27
+
+# === Utils ===
+tenacity>=8.5
+loguru>=0.7
