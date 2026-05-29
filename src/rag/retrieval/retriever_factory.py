@@ -1,17 +1,14 @@
-"""Retriever 工厂。
-
-按 settings.yaml 的 retrieval.hybrid.enabled 配置，返回 HybridSearch 或单路 retriever。
-预留 reranker 接入点（详见 DEV_SPEC.md 10. 可扩展性）。
-"""
+"""Retriever 工厂。"""
 from __future__ import annotations
+
+from functools import lru_cache
 
 from ..collections import CollectionName
 from .hybrid_search import HybridSearch
 
 
-def make_retriever(collection_name: CollectionName):
-    """根据配置实例化 retriever。"""
-    # TODO: 读 settings.retrieval.hybrid.enabled
-    # if hybrid: return HybridSearch(collection_name, rrf_k=settings.retrieval.hybrid.rrf_k)
-    # else: return DenseRetriever(collection_name)
-    return HybridSearch(collection_name)
+@lru_cache(maxsize=8)
+def get_retriever(collection_name: CollectionName) -> HybridSearch:
+    from src.utils.config_loader import load_settings
+    rrf_k = load_settings()["retrieval"]["hybrid"]["rrf_k"]
+    return HybridSearch(collection_name, rrf_k=rrf_k)

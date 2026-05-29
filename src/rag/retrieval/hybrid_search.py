@@ -31,32 +31,58 @@ class HybridSearch:
         top_k_final: int = 5,
         where: dict | None = None,
     ) -> list[RetrievalResult]:
-        """混合检索 + RRF 融合。
-
-        Args:
-            query: 查询文本
-            top_k_dense / top_k_sparse: 各路召回数
-            top_k_final: 最终返回数
-            where: 仅作用于 dense（Chroma 原生支持）；
-                   对 sparse 结果将在融合后用 Python 过滤。
-        """
-        # TODO:
-        # dense_results = self.dense.retrieve(query, top_k_dense, where=where)
-        # sparse_results = self.sparse.retrieve(query, top_k_sparse)
-        # if where: 对 sparse_results 做 metadata 过滤（与 dense 一致）
-        # fused = self._rrf_fuse(dense_results, sparse_results)
-        # return fused[:top_k_final]
-        raise NotImplementedError
+        dense_results = self.dense.retrieve(query, top_k_dense, where=where)
+        sparse_results = self.sparse.retrieve(query, top_k_sparse)
+        # sparse 结果按 metadata 过滤（与 dense 保持一致）
+        if where and sparse_results:
+            sparse_results = _filter_by_where(sparse_results, where)
+        fused = self._rrf_fuse(dense_results, sparse_results)
+        return fused[:top_k_final]
 
     def _rrf_fuse(
         self,
         dense: list[RetrievalResult],
         sparse: list[RetrievalResult],
     ) -> list[RetrievalResult]:
-        """RRF 融合两路结果。"""
-        # TODO:
-        # rrf_scores = defaultdict(float)
-        # for rank, r in enumerate(dense): rrf_scores[r.chunk_id] += 1/(self.rrf_k + rank + 1)
-        # for rank, r in enumerate(sparse): rrf_scores[r.chunk_id] += 1/(self.rrf_k + rank + 1)
-        # 重组 RetrievalResult 并按 rrf_scores 降序返回
-        raise NotImplementedError
+        rrf_scores: dict[str, float] = defaultdict(float)
+        all_results: dict[str, RetrievalResult] = {}
+        for rank, r in enumerate(dense):
+            rrf_scores[r.chunk_id] += 1.0 / (self.rrf_k + rank + 1)
+            all_results[r.chunk_id] = r
+        for rank, r in enumerate(sparse):
+            rrf_scores[r.chunk_id] += 1.0 / (self.rrf_k + rank + 1)
+            if r.chunk_id not in all_results:
+                all_results[r.chunk_id] = r
+        sorted_ids = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)
+        return [
+            RetrievalResult(
+                chunk_id=cid,
+                content=all_results[cid].content,
+                metadata=all_results[cid].metadata,
+                score=rrf_scores[cid],
+                source="hybrid",
+            )
+            for cid in sorted_ids
+        ]
+
+
+def _filter_by_where(results: list[RetrievalResult], where: dict) -> list[RetrievalResult]:
+    """对 sparse 结果做简单 metadata 过滤（仅支持 $in 和等值）。"""
+    filtered = []
+    for r in results:
+        match = True
+        for key, condition in where.items():
+            val = r.metadata.get(key)
+            if isinstance(condition, dict):
+                if "$in" in condition and val not in condition["$in"]:
+                    match = False
+                    break
+                if "$eq" in condition and val != condition["$eq"]:
+                    match = False
+                    break
+            elif val != condition:
+                match = False
+                break
+        if match:
+            filtered.append(r)
+    return filtered
