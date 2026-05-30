@@ -26,7 +26,7 @@ pypdf>=4.3
 markitdown>=0.0.1a3
 
 # === Frontend ===
-streamlit>=1.36
+flask>=3.0
 
 # === External tools ===
 requests>=2.32

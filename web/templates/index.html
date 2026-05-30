@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}对话 — 申研选校助手{% endblock %}
+
+{% block content %}
+<div class="chat-wrap" id="chat-messages">
+  <!-- 欢迎消息 -->
+  <div class="msg-row">
+    <div class="avatar">🤖</div>
+    <div class="bot-msg">
+      <span class="agent-tag">🎓 申研选校助手</span>
+      <strong>您好！我是申研选校助手，很高兴为您服务！</strong>
+      <p style="margin-top:8px;color:#718096;font-size:13px;">我可以帮您：</p>
+      <ul class="welcome-list">
+        <li>🏫 查询和筛选心仪的学校项目</li>
+        <li>👨‍🏫 预约专业的留学咨询老师</li>
+        <li>📋 解答签证、申请流程等问题</li>
+        <li>📊 分析您的申请偏好</li>
+      </ul>
+      <p style="margin-top:10px;color:#5b7fa6;font-weight:600;">请告诉我您需要什么帮助？</p>
+    </div>
+  </div>
+</div>
+
+<div class="input-area">
+  <div class="input-row">
+    <input id="user-input" class="input-box" type="text" placeholder="请输入您的问题或需求..." autocomplete="off">
+    <button id="send-btn" class="send-btn" title="发送">✈️</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}老师时间表{% endblock %}
+
+{% block content %}
+<div class="page-title">🗓️ 老师时间表</div>
+
+<div class="card" style="margin-bottom:12px;font-size:13px;color:#718096;">
+  <span style="margin-right:20px;">⬜ 可预约</span>
+  <span style="margin-right:20px;color:#e05252;">🔴 已预约</span>
+  <span style="color:#a0aec0;">⚫ 已屏蔽</span>
+</div>
+
+<div class="card">
+  {% for t in teachers %}
+  <div class="schedule-row">
+    <div class="teacher-name">
+      <div style="font-weight:600;">{{ t.name }}</div>
+      <div style="font-size:11px;color:#718096;">ID: {{ t.id }}</div>
+    </div>
+    <div class="slots-bar">
+      {% for s in slots.get(t.id, []) %}
+        <span class="slot-pill {{ s.status }}">{{ s.date[5:] }} {{ s.time_slot[:5] }}</span>
+      {% else %}
+        <span style="font-size:12px;color:#a0aec0;">暂无时间槽</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

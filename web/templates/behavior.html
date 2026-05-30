@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}用户行为分析{% endblock %}
+
+{% block content %}
+<div class="page-title">📊 用户行为分析</div>
+
+<div class="card">
+  <div class="toggle-row">
+    <label class="toggle">
+      <input type="checkbox" id="mem-toggle" {{ 'checked' if profile.memory_enabled else '' }}
+             onchange="setMemory(this.checked)">
+      <span class="toggle-slider"></span>
+    </label>
+    <span style="font-size:14px;font-weight:600;color:#4a5568;">启用偏好记忆</span>
+    <span style="font-size:12px;color:#718096;margin-left:8px;">开启后系统自动学习您的申请偏好</span>
+  </div>
+</div>
+
+{% set prefs = profile.preferences or {} %}
+{% if prefs %}
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-num" style="font-size:16px;">{{ (prefs.interested_countries or [])|join(', ') or '—' }}</div>
+    <div class="stat-label">感兴趣的国家</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num" style="font-size:16px;">{{ (prefs.interested_majors or [])|join(', ') or '—' }}</div>
+    <div class="stat-label">感兴趣的专业</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num" style="font-size:14px;">{{ prefs.tuition_range_usd or '—' }}</div>
+    <div class="stat-label">学费区间 (USD)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-num" style="font-size:14px;">{{ prefs.qs_rank_range or '—' }}</div>
+    <div class="stat-label">QS 排名偏好</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">关键词标签</div>
+  {% for kw in (prefs.keywords or []) %}
+    <span class="slot-pill" style="margin:3px;display:inline-block;">{{ kw }}</span>
+  {% else %}
+    <span style="color:#a0aec0;font-size:13px;">暂无关键词</span>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-title">原始偏好 JSON</div>
+  <pre style="font-size:12px;color:#718096;overflow-x:auto;">{{ prefs | tojson(indent=2) }}</pre>
+</div>
+
+<button class="nav-btn danger" onclick="clearProfile()" style="margin-top:4px;">🗑️ 清空画像</button>
+
+{% else %}
+<div class="card" style="text-align:center;color:#a0aec0;padding:40px;">
+  暂无偏好记录，开始对话后系统将自动学习您的偏好。
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function setMemory(enabled) {
+  await fetch('/api/memory', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled})});
+}
+async function clearProfile() {
+  await fetch('/api/clear', {method:'POST'});
+  location.reload();
+}
+</script>
+{% endblock %}

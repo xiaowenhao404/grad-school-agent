@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}申研选校助手{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span class="header-logo">🎓</span>
+    <div>
+      <div class="header-title">申研选校助手</div>
+      <div class="header-sub">AI 驱动的留学申请智能助手</div>
+    </div>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="/behavior" class="nav-btn">📊 用户行为分析</a>
+  <a href="/knowledge" class="nav-btn">📚 知识库管理</a>
+  <a href="/teachers" class="nav-btn">👨‍🏫 咨询老师列表</a>
+  <a href="/schedule" class="nav-btn">🗓️ 老师时间表</a>
+  <a href="/" class="nav-btn">💬 对话</a>
+  <button class="nav-btn danger" onclick="clearChat()">🗑️ 清空对话</button>
+</nav>
+
+<div class="page">
+  {% block content %}{% endblock %}
+</div>
+
+<script>
+async function clearChat() {
+  await fetch('/api/clear', {method: 'POST'});
+  if (window.location.pathname === '/') {
+    location.reload();
+  }
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

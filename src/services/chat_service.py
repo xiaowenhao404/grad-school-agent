@@ -61,8 +61,7 @@ class ChatService:
         }
 
     def clear_conversation(self, user_id: int) -> None:
-        from src.db.engine import get_engine
         from src.db.repositories.conversation_repo import ConversationRepository
         from src.db.repositories.user_repo import UserRepository
-        ConversationRepository(engine=get_engine()).clear(user_id)
-        UserRepository(engine=get_engine()).clear_profile(user_id)
+        ConversationRepository().clear(user_id)
+        UserRepository().clear_profile(user_id)

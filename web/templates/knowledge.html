@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}知识库管理{% endblock %}
+
+{% block content %}
+<div class="page-title">📚 知识库管理</div>
+
+<div class="col-cards">
+  {% for name, count in counts.items() %}
+  <div class="col-card">
+    <div class="col-num">{{ count }}</div>
+    <div class="col-name">{{ name }}</div>
+    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">chunks</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-title">重新摄取向量库</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+    <button class="nav-btn" onclick="ingest('schools')">🏫 重新摄取 Schools</button>
+    <button class="nav-btn" onclick="ingest('teachers')">👨‍🏫 重新摄取 Teachers</button>
+  </div>
+  <div id="ingest-status" style="margin-top:12px;font-size:13px;color:#718096;"></div>
+</div>
+
+<div class="card">
+  <div class="card-title">上传内部文档</div>
+  <p style="font-size:13px;color:#718096;margin-bottom:12px;">上传 PDF 或 Markdown 文件到 internal_docs 知识库</p>
+  <form id="upload-form" enctype="multipart/form-data">
+    <input type="file" id="file-input" accept=".pdf,.md,.txt" multiple
+           style="font-size:13px;color:#4a5568;">
+    <button type="button" class="nav-btn" style="margin-top:10px;" onclick="uploadFiles()">📤 开始摄取</button>
+  </form>
+  <div id="upload-status" style="margin-top:10px;font-size:13px;color:#718096;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function ingest(collection) {
+  const el = document.getElementById('ingest-status');
+  el.textContent = `正在摄取 ${collection}...`;
+  try {
+    const res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({collection})
+    });
+    const data = await res.json();
+    el.textContent = data.error ? `错误: ${data.error}` : `✅ ${collection} 摄取完成：${data.chunks} chunks`;
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) { el.textContent = '网络错误'; }
+}
+
+async function uploadFiles() {
+  const files = document.getElementById('file-input').files;
+  if (!files.length) return;
+  const el = document.getElementById('upload-status');
+  el.textContent = '上传中...';
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  try {
+    const res = await fetch('/api/upload', {method: 'POST', body: fd});
+    const data = await res.json();
+    el.textContent = data.error ? `错误: ${data.error}` : `✅ 摄取完成：${data.chunks} chunks`;
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) { el.textContent = '网络错误'; }
+}
+</script>
+{% endblock %}
