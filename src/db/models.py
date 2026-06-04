@@ -85,6 +85,28 @@ class Conversation(Base):
     messages = relationship("Message", back_populates="conversation")
 
 
+class ConversationState(Base):
+    """会话状态表 — 持久化跨轮 graph state 关键字段（appointment_slots / metadata）。
+
+    Why: AppointmentAgent 是多轮状态机，必须在 turn 之间保留 current_stage、
+    candidate_teachers、selected_teacher 等字段，否则用户输入序号"2"时
+    classifier 会重新路由回 collect_preferences。
+    """
+    __tablename__ = "conversation_state"
+    __table_args__ = {"comment": "会话级 graph 状态（appointment_slots/metadata 等）"}
+
+    conversation_id = Column(
+        Integer, ForeignKey("conversations.id"), primary_key=True,
+        comment="所属会话（一对一）",
+    )
+    appointment_slots = Column(Text, nullable=True, comment="预约状态机 JSON")
+    metadata_json = Column(Text, nullable=True, comment="metadata JSON（含 school_prefs 等）")
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow,
+        comment="最后更新时间",
+    )
+
+
 class Message(Base):
     """单条消息 — 记录哪个 Agent 生成，便于追溯与 demo 讲解。"""
     __tablename__ = "messages"
