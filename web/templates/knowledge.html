@@ -4,14 +4,37 @@
 {% block content %}
 <div class="page-title">📚 知识库管理</div>
 
+<div class="card" style="margin-bottom:14px;font-size:13px;color:#5b7fa6;line-height:1.7;">
+  💡 <strong>架构说明：</strong>"学校"与"项目"共享同一向量库 <code style="background:rgba(91,127,166,.1);padding:1px 6px;border-radius:4px;">schools</code>，
+  通过 <code style="background:rgba(91,127,166,.1);padding:1px 6px;border-radius:4px;">chunk_type</code> 字段区分（school_overview / program）。
+  选校机器人检索时按 chunk_type 过滤，所以你看到的"chunks 数 = 学校数 + 项目数"是正常的。
+</div>
+
 <div class="col-cards">
-  {% for name, count in counts.items() %}
   <div class="col-card">
-    <div class="col-num">{{ count }}</div>
-    <div class="col-name">{{ name }}</div>
-    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">chunks</div>
+    <div class="col-num">{{ doc_counts.schools }}</div>
+    <div class="col-name">🏫 学校</div>
+    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">{{ doc_counts.schools_chunks }} chunks</div>
+    <button class="nav-btn" style="margin-top:8px;font-size:11px;" onclick="showDetail('schools')">📖 查看详情</button>
   </div>
-  {% endfor %}
+  <div class="col-card">
+    <div class="col-num">{{ doc_counts.programs }}</div>
+    <div class="col-name">📚 项目</div>
+    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">{{ doc_counts.programs_chunks }} chunks</div>
+    <button class="nav-btn" style="margin-top:8px;font-size:11px;" onclick="showDetail('programs')">📖 查看详情</button>
+  </div>
+  <div class="col-card">
+    <div class="col-num">{{ doc_counts.teachers }}</div>
+    <div class="col-name">👨‍🏫 老师</div>
+    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">{{ counts.get('teachers', '—') }} chunks</div>
+    <button class="nav-btn" style="margin-top:8px;font-size:11px;" onclick="showDetail('teachers')">📖 查看详情</button>
+  </div>
+  <div class="col-card">
+    <div class="col-num">{{ doc_counts.internal_files }}</div>
+    <div class="col-name">📄 内部文档</div>
+    <div style="font-size:11px;color:#a0aec0;margin-top:2px;">{{ counts.get('internal_docs', '—') }} chunks</div>
+    <button class="nav-btn" style="margin-top:8px;font-size:11px;" onclick="showDetail('internal_docs')">📖 查看详情</button>
+  </div>
 </div>
 
 <div class="card">
@@ -33,10 +56,93 @@
   </form>
   <div id="upload-status" style="margin-top:10px;font-size:13px;color:#718096;"></div>
 </div>
+
+{# ── Detail modal ───────────────────────── #}
+<div id="detail-mask" style="display:none;position:fixed;inset:0;background:rgba(40,50,70,.35);z-index:99;align-items:center;justify-content:center;">
+  <div style="background:var(--bg);box-shadow:var(--shadow-out);border-radius:16px;padding:24px;width:880px;max-width:95vw;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h3 id="detail-title" style="color:#3d6080;">详情</h3>
+      <button class="nav-btn" onclick="closeDetail()">关闭</button>
+    </div>
+    <div id="detail-body" style="flex:1;overflow-y:auto;font-size:13px;line-height:1.6;color:#4a5568;">加载中…</div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+const TITLES = {schools:'🏫 学校列表', programs:'📚 项目列表', teachers:'👨‍🏫 老师列表', internal_docs:'📄 内部文档'};
+
+async function showDetail(kind) {
+  document.getElementById('detail-title').textContent = TITLES[kind] || '详情';
+  document.getElementById('detail-body').innerHTML = '加载中…';
+  document.getElementById('detail-mask').style.display = 'flex';
+  try {
+    const res = await fetch('/api/knowledge/' + kind);
+    const r = await res.json();
+    if (r.error) { document.getElementById('detail-body').innerHTML = '❌ ' + r.error; return; }
+    document.getElementById('detail-body').innerHTML = renderItems(kind, r.items || []);
+  } catch (e) {
+    document.getElementById('detail-body').innerHTML = '❌ 网络异常：' + (e.message||e);
+  }
+}
+function closeDetail() { document.getElementById('detail-mask').style.display = 'none'; }
+document.getElementById('detail-mask').addEventListener('click', e => {
+  if (e.target.id === 'detail-mask') closeDetail();
+});
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function jsonField(v) {
+  if (v == null) return '—';
+  if (Array.isArray(v)) return v.join(' / ');
+  if (typeof v === 'string' && v.startsWith('[')) { try { return JSON.parse(v).join(' / '); } catch(_){} }
+  return esc(v);
+}
+
+function renderItems(kind, items) {
+  if (!items.length) return '<div style="color:#a0aec0;">暂无数据</div>';
+  if (kind === 'schools') {
+    return `<table class="neu-table"><thead><tr><th>ID</th><th>学校</th><th>国家</th><th>QS</th><th>官网</th></tr></thead><tbody>` +
+      items.map(s => `<tr><td>#${s.id}</td><td>${jsonField(s.names)}</td><td>${esc(s.country)}</td><td>${s.qs_rank ?? '—'}</td><td><a href="${esc(s.official_site||'#')}" target="_blank">${esc(s.official_site||'—')}</a></td></tr>`).join('') + '</tbody></table>';
+  }
+  if (kind === 'programs') {
+    return `<table class="neu-table"><thead><tr><th>ID</th><th>学校</th><th>项目</th><th>专业</th><th>QS</th><th>学制</th><th>学费</th><th>IELTS</th></tr></thead><tbody>` +
+      items.map(p => `<tr><td>#${p.id}</td><td>${jsonField(p.school_names)}</td><td>${jsonField(p.program_names)}</td><td>${esc(p.major_category)}</td><td>${p.qs_rank ?? '—'}</td><td>${p.duration_months}月</td><td>${p.tuition_per_year} ${esc(p.currency)}</td><td>${p.ielts_min ?? '—'}</td></tr>`).join('') + '</tbody></table>';
+  }
+  if (kind === 'teachers') {
+    return `<table class="neu-table"><thead><tr><th>ID</th><th>姓名</th><th>性别</th><th>擅长地区</th><th>擅长专业</th><th>评分</th></tr></thead><tbody>` +
+      items.map(t => `<tr><td>#${t.id}</td><td>${esc(t.name)}</td><td>${t.gender==='male'?'男':(t.gender==='female'?'女':'其他')}</td><td>${esc(t.expertise_regions||'—')}</td><td>${esc(t.expertise_majors||'—')}</td><td>${t.rating ?? '—'}</td></tr>`).join('') + '</tbody></table>';
+  }
+  if (kind === 'internal_docs') {
+    // 把 full 内容存到 window，避免多次 esc 大文本
+    window.__docCache = items.reduce((acc, d, i) => { acc['doc-'+i] = d.full || d.preview || ''; return acc; }, {});
+    return items.map((d, i) => `
+      <div style="padding:10px 0;${i?'border-top:1px solid rgba(0,0,0,.06);':''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <strong style="color:#3d6080;">📄 ${esc(d.source)}</strong>
+          <span style="font-size:11px;color:#a0aec0;">${d.chunks_count || 1} chunks</span>
+        </div>
+        <div id="preview-${i}" class="doc-preview" style="font-size:12px;color:#718096;margin-top:4px;max-height:80px;overflow:hidden;white-space:pre-wrap;line-height:1.6;">${esc(d.full || d.preview)}</div>
+        <button class="nav-btn" style="font-size:11px;padding:3px 12px;margin-top:6px;" onclick="toggleDoc(${i}, this)">展开 ▼</button>
+      </div>`).join('');
+  }
+  return '<pre>' + esc(JSON.stringify(items, null, 2)) + '</pre>';
+}
+
+function toggleDoc(idx, btn) {
+  const el = document.getElementById('preview-' + idx);
+  if (!el) return;
+  if (el.style.maxHeight === 'none') {
+    el.style.maxHeight = '80px';
+    btn.textContent = '展开 ▼';
+  } else {
+    el.style.maxHeight = 'none';
+    btn.textContent = '收起 ▲';
+  }
+}
+
 async function ingest(collection) {
   const el = document.getElementById('ingest-status');
   el.textContent = `正在摄取 ${collection}...`;
@@ -49,7 +155,7 @@ async function ingest(collection) {
     const data = await res.json();
     el.textContent = data.error ? `错误: ${data.error}` : `✅ ${collection} 摄取完成：${data.chunks} chunks`;
     setTimeout(() => location.reload(), 1500);
-  } catch(e) { el.textContent = '网络错误'; }
+  } catch(e) { el.textContent = '网络错误：' + (e.message||e); }
 }
 
 async function uploadFiles() {
@@ -64,7 +170,7 @@ async function uploadFiles() {
     const data = await res.json();
     el.textContent = data.error ? `错误: ${data.error}` : `✅ 摄取完成：${data.chunks} chunks`;
     setTimeout(() => location.reload(), 1500);
-  } catch(e) { el.textContent = '网络错误'; }
+  } catch(e) { el.textContent = '网络错误：' + (e.message||e); }
 }
 </script>
 {% endblock %}

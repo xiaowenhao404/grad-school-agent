@@ -4,27 +4,191 @@
 {% block content %}
 <div class="page-title">🗓️ 老师时间表</div>
 
-<div class="card" style="margin-bottom:12px;font-size:13px;color:#718096;">
-  <span style="margin-right:20px;">⬜ 可预约</span>
-  <span style="margin-right:20px;color:#e05252;">🔴 已预约</span>
-  <span style="color:#a0aec0;">⚫ 已屏蔽</span>
+{# ── 营业时间说明卡 + 日期切换 ─────────────────────── #}
+<div class="card" style="margin-bottom:14px;">
+  <div style="text-align:center;color:#5b7fa6;font-weight:600;font-size:14px;margin-bottom:10px;">
+    🕐 营业时间说明
+  </div>
+  <div style="text-align:center;font-size:13px;color:#718096;line-height:1.9;">
+    今日日期：<strong style="color:#3d6080;">{{ today }}（北京时间）</strong><br>
+    工作时间：<strong style="color:#3d6080;">12:00 - 22:00（共 10 小时）</strong><br>
+    粉橙渐变胶囊表示已预约时段，灰色胶囊表示已屏蔽，空白区域为可预约时间
+  </div>
+  <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">
+    <button class="nav-btn" onclick="navDate(-1)" {% if not all_dates or all_dates[0] == sel_date %}disabled style="opacity:.4;cursor:not-allowed;"{% endif %}>◀ 前一天</button>
+    <select id="date-select" onchange="location='/schedule?date='+this.value" class="nav-btn" style="padding:6px 14px;">
+      {% for d in all_dates %}
+        <option value="{{ d }}" {% if d == sel_date %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+      {% if not all_dates %}
+        <option value="{{ sel_date }}" selected>{{ sel_date }}（暂无数据）</option>
+      {% endif %}
+    </select>
+    <button class="nav-btn" onclick="navDate(1)" {% if not all_dates or all_dates[-1] == sel_date %}disabled style="opacity:.4;cursor:not-allowed;"{% endif %}>后一天 ▶</button>
+  </div>
 </div>
 
-<div class="card">
-  {% for t in teachers %}
-  <div class="schedule-row">
-    <div class="teacher-name">
-      <div style="font-weight:600;">{{ t.name }}</div>
-      <div style="font-size:11px;color:#718096;">ID: {{ t.id }}</div>
-    </div>
-    <div class="slots-bar">
-      {% for s in slots.get(t.id, []) %}
-        <span class="slot-pill {{ s.status }}">{{ s.date[5:] }} {{ s.time_slot[:5] }}</span>
-      {% else %}
-        <span style="font-size:12px;color:#a0aec0;">暂无时间槽</span>
-      {% endfor %}
-    </div>
-  </div>
-  {% endfor %}
+{# ── 图例 ─────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:14px;font-size:13px;color:#718096;display:flex;justify-content:space-around;align-items:center;flex-wrap:wrap;gap:14px;">
+  <span>🕛 12:00 开始营业</span>
+  <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:linear-gradient(135deg,#ff8a7a,#ffb86b);vertical-align:middle;margin-right:4px;"></span>已预约时段</span>
+  <span><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#a0aec0;vertical-align:middle;margin-right:4px;"></span>已屏蔽</span>
+  <span>🌙 22:00 结束营业</span>
 </div>
+
+{# ── 时间表主体 ──────────────────────────────────── #}
+<div class="card">
+  {% if not teachers %}
+    <div style="color:#a0aec0;text-align:center;padding:20px;">暂无老师数据</div>
+  {% else %}
+    {% for t in teachers %}
+    <div class="timeline-row" data-tid="{{ t.id }}">
+      <div class="timeline-teacher">
+        <div class="t-name">{{ t.name }}</div>
+        <div class="t-id">ID: {{ t.id }}</div>
+      </div>
+      <div class="timeline-track">
+        {% set tslots = slots_by_tid.get(t.id, []) %}
+        {% for s in tslots %}
+          {% set parts = s.time_slot.split('-') %}
+          {% if parts|length == 2 %}
+            {% set sh = parts[0].split(':')[0]|int %}
+            {% set sm = parts[0].split(':')[1]|int %}
+            {% set eh = parts[1].split(':')[0]|int %}
+            {% set em = parts[1].split(':')[1]|int %}
+            {% set start_min = sh * 60 + sm %}
+            {% set end_min = eh * 60 + em %}
+            {% set day_start = 12 * 60 %}
+            {% set day_end = 22 * 60 %}
+            {% set day_span = day_end - day_start %}
+            {% set clip_start = [start_min, day_start]|max %}
+            {% set clip_end = [end_min, day_end]|min %}
+            {% if clip_end > clip_start %}
+              {% set left_pct = (clip_start - day_start) * 100 / day_span %}
+              {% set width_pct = (clip_end - clip_start) * 100 / day_span %}
+              <span class="timeline-pill {{ s.status }}"
+                    data-sid="{{ s.id }}" data-status="{{ s.status }}"
+                    style="left:{{ '%.2f'|format(left_pct) }}%;width:{{ '%.2f'|format(width_pct) }}%;"
+                    title="{{ s.time_slot }}（点击切换状态）"
+                    onclick="cycleSlot(this)">
+                {% if width_pct >= 8 %}🍃{{ s.time_slot }}{% endif %}
+              </span>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </div>
+      <button class="nav-btn timeline-add" onclick="showAddSlot({{ t.id }}, '{{ t.name }}')">➕</button>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+{# ── Add slot modal ──────────────────────────────── #}
+<div id="add-mask" style="display:none;position:fixed;inset:0;background:rgba(40,50,70,.35);z-index:99;align-items:center;justify-content:center;">
+  <div style="background:var(--bg);box-shadow:var(--shadow-out);border-radius:16px;padding:24px;width:420px;max-width:90vw;">
+    <h3 id="add-title" style="color:#3d6080;margin-bottom:16px;">➕ 添加可预约时段</h3>
+    <form id="slot-form" onsubmit="event.preventDefault();submitSlot();">
+      <input type="hidden" id="slot-tid">
+      <div class="form-grid">
+        <label style="grid-column:1/-1;">日期*<input id="slot-date" type="date" required></label>
+        <label>开始时间*<input id="slot-start" type="time" required></label>
+        <label>结束时间*<input id="slot-end" type="time" required></label>
+      </div>
+      <div style="font-size:11px;color:#a0aec0;margin-top:8px;">⚠️ 建议时段在 12:00-22:00 之间</div>
+      <div id="slot-msg" style="font-size:12px;color:#e05252;min-height:18px;margin-top:8px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
+        <button type="button" class="nav-btn" onclick="closeAdd()">取消</button>
+        <button type="submit" class="nav-btn" style="color:#3d6080;">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+.form-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px 14px; }
+.form-grid label { display:flex;flex-direction:column;font-size:12px;color:#5b7fa6;font-weight:600;gap:4px; }
+.form-grid input {
+  background: var(--bg); box-shadow: var(--shadow-in); border:none;
+  border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--text); font-family: inherit;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ALL_DATES = {{ all_dates|tojson }};
+const SEL_DATE = {{ sel_date|tojson }};
+
+function navDate(delta) {
+  const i = ALL_DATES.indexOf(SEL_DATE);
+  if (i < 0) return;
+  const j = i + delta;
+  if (j < 0 || j >= ALL_DATES.length) return;
+  location = '/schedule?date=' + encodeURIComponent(ALL_DATES[j]);
+}
+
+const NEXT_STATUS = {available:'booked', booked:'blocked', blocked:'available'};
+const STATUS_ZH = {available:'可预约', booked:'已预约', blocked:'已屏蔽'};
+
+async function cycleSlot(el) {
+  const sid = el.dataset.sid;
+  const cur = el.dataset.status;
+  const next = NEXT_STATUS[cur] || 'available';
+  if (!confirm(`将该时段改为「${STATUS_ZH[next]}」？`)) return;
+  try {
+    const res = await fetch('/api/schedule/' + sid, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({status: next})
+    });
+    const r = await res.json();
+    if (!res.ok || r.error) { alert('❌ ' + (r.error || '修改失败')); return; }
+    el.classList.remove('available','booked','blocked');
+    el.classList.add(next);
+    el.dataset.status = next;
+    if (next === 'available') { location.reload(); }
+  } catch (e) { alert('❌ 网络异常：' + (e.message||e)); }
+}
+
+function showAddSlot(tid, name) {
+  document.getElementById('add-title').textContent = '➕ 为 ' + name + ' 添加时段';
+  document.getElementById('slot-tid').value = tid;
+  document.getElementById('slot-form').reset();
+  document.getElementById('slot-date').value = SEL_DATE;
+  document.getElementById('slot-msg').textContent = '';
+  document.getElementById('add-mask').style.display = 'flex';
+}
+function closeAdd() { document.getElementById('add-mask').style.display = 'none'; }
+
+async function submitSlot() {
+  const tid = document.getElementById('slot-tid').value;
+  const date = document.getElementById('slot-date').value;
+  const start = document.getElementById('slot-start').value;
+  const end = document.getElementById('slot-end').value;
+  if (!date || !start || !end) {
+    document.getElementById('slot-msg').textContent = '请填完所有字段'; return;
+  }
+  if (start >= end) {
+    document.getElementById('slot-msg').textContent = '开始时间必须早于结束时间'; return;
+  }
+  const time_slot = start + '-' + end;
+  try {
+    const res = await fetch('/api/schedule', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({teacher_id: parseInt(tid), date, time_slot})
+    });
+    const r = await res.json();
+    if (!res.ok || r.error) {
+      document.getElementById('slot-msg').textContent = '❌ ' + (r.error || '保存失败');
+      return;
+    }
+    closeAdd();
+    location = '/schedule?date=' + encodeURIComponent(date);
+  } catch (e) {
+    document.getElementById('slot-msg').textContent = '❌ 网络异常：' + (e.message||e);
+  }
+}
+document.getElementById('add-mask').addEventListener('click', e => {
+  if (e.target.id === 'add-mask') closeAdd();
+});
+</script>
 {% endblock %}

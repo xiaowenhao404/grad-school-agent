@@ -2,7 +2,10 @@
 {% block title %}咨询老师列表{% endblock %}
 
 {% block content %}
-<div class="page-title">👨‍🏫 咨询老师列表</div>
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;">
+  <span>👨‍🏫 咨询老师列表</span>
+  <button class="nav-btn" onclick="showCreateModal()">➕ 添加新老师</button>
+</div>
 
 <div class="stats-row">
   <div class="stat-card">
@@ -20,25 +23,160 @@
 </div>
 
 <div class="card">
-  <table class="neu-table">
-    <thead>
-      <tr>
-        <th>ID</th><th>姓名</th><th>性别</th><th>擅长地区</th><th>擅长专业</th><th>评分</th><th>留学经历</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in teachers %}
-      <tr>
-        <td>{{ t.id }}</td>
-        <td><strong>{{ t.name }}</strong></td>
-        <td>{{ '♂ 男' if t.gender == 'male' else '♀ 女' }}</td>
-        <td>{{ t.expertise_regions or '—' }}</td>
-        <td>{{ t.expertise_majors or '—' }}</td>
-        <td>{{ t.rating or '—' }}</td>
-        <td style="font-size:12px;color:#718096;">{{ (t.study_abroad or '—')[:40] }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% for t in teachers %}
+  <div class="teacher-row" data-tid="{{ t.id }}" style="display:flex;gap:16px;padding:14px 0;{% if not loop.last %}border-bottom:1px solid rgba(0,0,0,0.05);{% endif %}">
+    <div class="avatar" style="width:48px;height:48px;font-size:22px;flex-shrink:0;">
+      {{ '👨' if t.gender == 'male' else '👩' }}
+    </div>
+    <div style="flex:1;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+        <strong style="font-size:15px;color:#3d6080;">{{ t.name }}</strong>
+        <span style="font-size:12px;color:#718096;">ID #{{ t.id }}</span>
+        <span class="slot-pill" style="font-size:11px;">{{ '♂ 男' if t.gender == 'male' else '♀ 女' }}</span>
+        {% if t.rating %}<span class="slot-pill" style="font-size:11px;">⭐ {{ t.rating }}</span>{% endif %}
+        <button class="nav-btn" style="margin-left:auto;font-size:11px;padding:4px 12px;"
+                onclick='showEditModal({{ t|tojson_zh(0) }})'>✏️ 修改</button>
+      </div>
+      {% if t.bio %}
+      <p style="font-size:13px;color:#4a5568;line-height:1.6;margin-bottom:8px;">{{ t.bio }}</p>
+      {% endif %}
+      <div style="font-size:12px;color:#718096;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;">
+        <span style="color:#5b7fa6;font-weight:600;">擅长地区</span><span>{{ t.expertise_regions or '—' }}</span>
+        <span style="color:#5b7fa6;font-weight:600;">擅长专业</span><span>{{ t.expertise_majors or '—' }}</span>
+        {% if t.study_abroad %}<span style="color:#5b7fa6;font-weight:600;">留学经历</span><span>{{ t.study_abroad }}</span>{% endif %}
+        {% if t.work_experience %}<span style="color:#5b7fa6;font-weight:600;">工作经历</span><span>{{ t.work_experience }}</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
 </div>
+
+{# ── Modal ───────────────────────────────── #}
+<div id="modal-mask" style="display:none;position:fixed;inset:0;background:rgba(40,50,70,.35);z-index:99;align-items:center;justify-content:center;">
+  <div style="background:var(--bg);box-shadow:var(--shadow-out);border-radius:16px;padding:24px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto;">
+    <h3 id="modal-title" style="color:#3d6080;margin-bottom:16px;">添加新老师</h3>
+    <form id="teacher-form" onsubmit="event.preventDefault();submitTeacher();">
+      <input type="hidden" id="f-id" value="">
+      <div class="form-grid">
+        <label>姓名*<input id="f-name" required></label>
+        <label>性别*
+          <select id="f-gender" required>
+            <option value="male">男</option>
+            <option value="female">女</option>
+            <option value="other">其他</option>
+          </select>
+        </label>
+        <label>擅长国家和地区<input id="f-regions" placeholder="美国,英国,香港"></label>
+        <label>擅长专业方向<input id="f-majors" placeholder="CS,AI,商科"></label>
+        <label>留学经历<input id="f-study" placeholder="MIT MS in CS, 2018-2020"></label>
+        <label>工作经历<input id="f-work" placeholder="头部留学机构 5 年"></label>
+        <label>评分<input id="f-rating" type="number" step="0.1" min="0" max="5"></label>
+        <label>头像 URL<input id="f-avatar"></label>
+        <label style="grid-column:1/-1;">简介
+          <textarea id="f-bio" rows="3" placeholder="一句话自述"></textarea>
+        </label>
+      </div>
+      <div id="form-msg" style="font-size:12px;color:#e05252;min-height:18px;margin-top:8px;"></div>
+      <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:12px;">
+        <button type="button" id="btn-delete" class="nav-btn danger" style="display:none;" onclick="deleteTeacher()">🗑️ 删除</button>
+        <div style="display:flex;gap:10px;margin-left:auto;">
+          <button type="button" class="nav-btn" onclick="closeModal()">取消</button>
+          <button type="submit" class="nav-btn" style="color:#3d6080;">保存</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+.form-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px 14px; }
+.form-grid label { display:flex;flex-direction:column;font-size:12px;color:#5b7fa6;font-weight:600;gap:4px; }
+.form-grid input, .form-grid select, .form-grid textarea {
+  background: var(--bg); box-shadow: var(--shadow-in); border:none;
+  border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--text); font-family: inherit;
+}
+.form-grid input:focus, .form-grid textarea:focus, .form-grid select:focus { outline:none; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showCreateModal() {
+  document.getElementById('modal-title').textContent = '➕ 添加新老师';
+  document.getElementById('teacher-form').reset();
+  document.getElementById('f-id').value = '';
+  document.getElementById('form-msg').textContent = '';
+  document.getElementById('btn-delete').style.display = 'none';
+  document.getElementById('modal-mask').style.display = 'flex';
+}
+function showEditModal(t) {
+  document.getElementById('modal-title').textContent = '✏️ 修改老师信息 #' + t.id;
+  document.getElementById('f-id').value = t.id;
+  document.getElementById('f-name').value = t.name || '';
+  document.getElementById('f-gender').value = t.gender || 'male';
+  document.getElementById('f-regions').value = t.expertise_regions || '';
+  document.getElementById('f-majors').value = t.expertise_majors || '';
+  document.getElementById('f-study').value = t.study_abroad || '';
+  document.getElementById('f-work').value = t.work_experience || '';
+  document.getElementById('f-rating').value = t.rating || '';
+  document.getElementById('f-avatar').value = t.avatar_url || '';
+  document.getElementById('f-bio').value = t.bio || '';
+  document.getElementById('form-msg').textContent = '';
+  document.getElementById('btn-delete').style.display = 'inline-flex';
+  document.getElementById('modal-mask').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modal-mask').style.display = 'none';
+}
+async function submitTeacher() {
+  const id = document.getElementById('f-id').value;
+  const data = {
+    name: document.getElementById('f-name').value.trim(),
+    gender: document.getElementById('f-gender').value,
+    expertise_regions: document.getElementById('f-regions').value.trim(),
+    expertise_majors: document.getElementById('f-majors').value.trim(),
+    study_abroad: document.getElementById('f-study').value.trim(),
+    work_experience: document.getElementById('f-work').value.trim(),
+    rating: parseFloat(document.getElementById('f-rating').value) || null,
+    avatar_url: document.getElementById('f-avatar').value.trim(),
+    bio: document.getElementById('f-bio').value.trim(),
+  };
+  const url = id ? '/api/teachers/' + id : '/api/teachers';
+  const method = id ? 'PUT' : 'POST';
+  try {
+    const res = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+    const r = await res.json();
+    if (!res.ok || r.error) {
+      document.getElementById('form-msg').textContent = '❌ ' + (r.error || '保存失败');
+      return;
+    }
+    closeModal();
+    location.reload();
+  } catch (e) {
+    document.getElementById('form-msg').textContent = '❌ 网络异常：' + (e.message || e);
+  }
+}
+document.getElementById('modal-mask').addEventListener('click', e => {
+  if (e.target.id === 'modal-mask') closeModal();
+});
+
+async function deleteTeacher() {
+  const id = document.getElementById('f-id').value;
+  const name = document.getElementById('f-name').value || ('#' + id);
+  if (!id) return;
+  if (!confirm(`确定删除老师「${name}」吗？\n该操作将同步删除其所有时段与预约。`)) return;
+  try {
+    const res = await fetch('/api/teachers/' + id, {method: 'DELETE'});
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok || r.error) {
+      document.getElementById('form-msg').textContent = '❌ ' + (r.error || '删除失败');
+      return;
+    }
+    closeModal();
+    location.reload();
+  } catch (e) {
+    document.getElementById('form-msg').textContent = '❌ 网络异常：' + (e.message || e);
+  }
+}
+</script>
 {% endblock %}

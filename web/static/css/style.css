@@ -237,3 +237,162 @@ body {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #c5cad3; border-radius: 3px; }
+
+/* ── Bot Markdown (final 消息) ── */
+.bot-md { font-size: 14px; line-height: 1.65; color: var(--text); }
+.bot-md h1, .bot-md h2, .bot-md h3 {
+  color: var(--accent-dark); margin: 10px 0 6px; font-weight: 700;
+}
+.bot-md h1 { font-size: 17px; }
+.bot-md h2 { font-size: 16px; }
+.bot-md h3 { font-size: 15px; padding-bottom: 4px; border-bottom: 1px dashed rgba(91,127,166,.18); }
+.bot-md p { margin: 6px 0; }
+.bot-md ul, .bot-md ol { padding-left: 22px; margin: 6px 0; }
+.bot-md li { padding: 2px 0; }
+.bot-md strong { color: var(--accent-dark); }
+.bot-md code {
+  background: rgba(91,127,166,.1); color: var(--accent-dark);
+  padding: 1px 6px; border-radius: 4px; font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.bot-md pre {
+  background: rgba(91,127,166,.08); padding: 10px 12px;
+  border-radius: 8px; overflow-x: auto; margin: 8px 0;
+  box-shadow: var(--shadow-in);
+}
+.bot-md pre code { background: transparent; padding: 0; }
+.bot-md blockquote {
+  border-left: 3px solid var(--accent);
+  background: rgba(91,127,166,.06);
+  padding: 6px 12px; margin: 8px 0;
+  color: #5b7fa6; font-size: 13px; font-style: italic;
+  border-radius: 0 8px 8px 0;
+}
+.bot-md a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.bot-md a:hover { text-decoration: underline; color: var(--accent-dark); }
+.bot-md table {
+  width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px;
+}
+.bot-md th, .bot-md td {
+  padding: 6px 10px; border: 1px solid rgba(91,127,166,.2); text-align: left;
+}
+.bot-md th { background: rgba(91,127,166,.08); color: var(--accent-dark); }
+.bot-md hr { border: 0; border-top: 1px dashed rgba(91,127,166,.2); margin: 10px 0; }
+
+/* ── Workflow trace box ── */
+.trace-box {
+  flex: 1;
+  background: var(--bg);
+  box-shadow: inset 4px 4px 8px rgba(174,184,200,0.5),
+              inset -4px -4px 8px rgba(255,255,255,0.9);
+  border-radius: 14px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #4a5568;
+  max-width: 78%;
+}
+.trace-title {
+  font-weight: 600;
+  color: #5b7fa6;
+  font-size: 12px;
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.trace-list li {
+  padding: 4px 0;
+  border-left: 2px solid #c5d4e8;
+  padding-left: 10px;
+  margin-bottom: 2px;
+  line-height: 1.5;
+  animation: traceFadeIn 0.25s ease-out;
+}
+.trace-agent {
+  font-weight: 600;
+  color: #6b8caf;
+  margin-right: 4px;
+}
+@keyframes traceFadeIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Horizontal timeline ── */
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+}
+.timeline-row:last-child { border-bottom: none; }
+.timeline-teacher {
+  width: 90px;
+  flex-shrink: 0;
+}
+.timeline-teacher .t-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3d6080;
+}
+.timeline-teacher .t-id {
+  font-size: 11px;
+  color: #a0aec0;
+  background: var(--bg);
+  box-shadow: var(--shadow-in);
+  border-radius: 50px;
+  padding: 2px 10px;
+  display: inline-block;
+  margin-top: 4px;
+}
+.timeline-track {
+  position: relative;
+  flex: 1;
+  height: 38px;
+  background: var(--bg);
+  box-shadow: var(--shadow-in);
+  border-radius: 50px;
+  overflow: hidden;
+}
+.timeline-pill {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 50px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: transform .12s, box-shadow .12s;
+  padding: 0 8px;
+}
+.timeline-pill:hover { transform: scale(1.04); box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.timeline-pill.booked {
+  background: linear-gradient(135deg, #ff8a7a 0%, #ffb86b 100%);
+  box-shadow: 0 2px 6px rgba(255,138,122,.4);
+}
+.timeline-pill.blocked {
+  background: #a0aec0;
+  box-shadow: 0 2px 6px rgba(160,174,192,.4);
+}
+.timeline-pill.available {
+  background: linear-gradient(135deg, #91c4f2 0%, #76aedb 100%);
+  box-shadow: 0 2px 6px rgba(118,174,219,.35);
+  opacity: .55;
+}
+.timeline-add {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 12px;
+}
