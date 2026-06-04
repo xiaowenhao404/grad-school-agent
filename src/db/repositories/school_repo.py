@@ -28,6 +28,24 @@ class SchoolRepository:
             from src.db.models import School
             return [_to_dict(r) for r in s.query(School).all()]
 
+    def search_by_name(self, kw: str, limit: int = 5) -> list[dict]:
+        """模糊匹配 names JSON 数组里的任一变体（中英文均可）。"""
+        from src.db.models import School
+        if not kw:
+            return []
+        kw = kw.strip()
+        # SQLite 把 JSON 字段存为字符串，LIKE 直接命中
+        sql = text("SELECT * FROM schools WHERE names LIKE :kw ORDER BY qs_rank LIMIT :lim")
+        with self._s() as s:
+            rows = s.execute(sql, {"kw": f"%{kw}%", "lim": limit}).mappings().fetchall()
+            results = []
+            for r in rows:
+                # 通过 ORM 获得 dict 形式（不依赖 _to_dict 入参类型）
+                obj = s.get(School, r["id"])
+                if obj:
+                    results.append(_to_dict(obj))
+            return results
+
     def bulk_insert(self, records: list[dict]) -> int:
         from src.db.models import School
         with self._s() as s:
@@ -51,9 +69,39 @@ class SchoolProgramRepository:
             row = s.get(SchoolProgram, program_id)
             return _to_dict(row) if row else None
 
+    # 中文 → 数据库实际 major_category 关键词映射（用于 LIKE 模糊匹配）
+    _MAJOR_ALIASES = {
+        "计算机": ["CS", "计算机", "EE", "DS", "AI"],
+        "computer": ["CS", "computer"],
+        "cs": ["CS"],
+        "ai": ["AI", "CS"],
+        "数据科学": ["DS", "Data"],
+        "ds": ["DS"],
+        "金融": ["金融", "Finance"],
+        "商科": ["商科", "Business", "MBA"],
+        "工程": ["EE", "工程", "Eng"],
+        "电子": ["EE"],
+    }
+
+    @classmethod
+    def _major_keywords(cls, major: str) -> list[str]:
+        """把用户的『计算机/AI/CS』归一为可能的 major_category 关键词列表。"""
+        if not major:
+            return []
+        m = major.strip().lower()
+        for k, vs in cls._MAJOR_ALIASES.items():
+            if k.lower() in m or m in k.lower():
+                return vs
+        return [major]
+
     def filter_programs(self, preferences: dict, limit: int = 50) -> list[int]:
         conditions = ["1=1"]
         params: dict = {}
+        # 精确学校匹配（specific_name 直达使用）
+        sid = preferences.get("school_id")
+        if sid:
+            conditions.append("p.school_id = :sid")
+            params["sid"] = sid
         tr = preferences.get("tuition_range")
         if tr and len(tr) == 2:
             conditions.append("p.tuition_per_year BETWEEN :t_min AND :t_max")
@@ -64,12 +112,20 @@ class SchoolProgramRepository:
             params["q_min"], params["q_max"] = qr
         country = preferences.get("country")
         if country:
-            conditions.append("s.country = :country")
-            params["country"] = country
+            conditions.append("(s.country LIKE :country OR s.country_en LIKE :country)")
+            params["country"] = f"%{country}%"
         major = preferences.get("major_category")
         if major:
-            conditions.append("p.major_category = :major")
-            params["major"] = major
+            kws = self._major_keywords(major)
+            or_parts = []
+            for i, kw in enumerate(kws):
+                key = f"major{i}"
+                or_parts.append(
+                    f"(p.major_category LIKE :{key} OR p.tags LIKE :{key} OR p.program_short_names LIKE :{key})"
+                )
+                params[key] = f"%{kw}%"
+            if or_parts:
+                conditions.append("(" + " OR ".join(or_parts) + ")")
         dur = preferences.get("duration_max")
         if dur:
             conditions.append("p.duration_months <= :dur")

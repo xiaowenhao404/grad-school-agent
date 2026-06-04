@@ -11,6 +11,8 @@ from src.graph.state import GraphState
 def _reject_node(state: GraphState) -> GraphState:
     reply = "抱歉，我是申研选校助手，仅能协助选校咨询、预约老师和相关问题解答。"
     state["agent_response"] = reply
+    trace = state.setdefault("trace", [])
+    trace.append({"agent": "reject", "label": "归类机器人", "text": "本轮请求与本系统业务无关，已拒绝。"})
     msgs = state.setdefault("messages", [])
     from datetime import datetime
     msgs.append({"role": "assistant", "agent_name": "reject",

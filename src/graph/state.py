@@ -52,3 +52,7 @@ class GraphState(TypedDict, total=False):
 
     # 预约状态机
     appointment_slots: AppointmentSlots
+
+    # 工作流可视化追踪（前端展示思考过程）
+    # 每项形如 {"agent": "task_classifier", "label": "归类机器人", "text": "..."}
+    trace: list[dict]

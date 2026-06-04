@@ -61,22 +61,24 @@ class UserRepository:
 
 
 def _merge_prefs(old: dict, new: dict) -> dict:
-    """合并偏好：数值区间取并集，list 字段去重合并，标量字段覆盖，null 跳过。"""
+    """合并偏好：最新一轮覆盖旧值（用户口头改了就该改），null/空值跳过。
+
+    对于嵌套 dict（如 school_prefs / teacher_prefs），做一层深度合并：
+    内层标量/列表也走"新值覆盖旧值"逻辑，未提及的字段保留。
+    """
     result = dict(old)
     for k, v in new.items():
-        if v is None:
+        if v is None or v == "" or v == [] or v == {}:
             continue
         old_v = result.get(k)
-        # 数值区间：长度为 2 且两个元素都是数字
-        if (isinstance(v, list) and len(v) == 2
-                and all(isinstance(x, (int, float)) for x in v)):
-            if (isinstance(old_v, list) and len(old_v) == 2
-                    and all(isinstance(x, (int, float)) for x in old_v)):
-                result[k] = [min(old_v[0], v[0]), max(old_v[1], v[1])]
-            else:
-                result[k] = v
-        elif isinstance(v, list) and isinstance(old_v, list):
-            result[k] = list(dict.fromkeys(old_v + v))
+        if isinstance(v, dict) and isinstance(old_v, dict):
+            # 嵌套字典：内层字段也是新值覆盖
+            merged = dict(old_v)
+            for ik, iv in v.items():
+                if iv is None or iv == "" or iv == [] or iv == {}:
+                    continue
+                merged[ik] = iv
+            result[k] = merged
         else:
             result[k] = v
     return result

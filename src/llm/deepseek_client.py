@@ -17,7 +17,8 @@ class DeepSeekClient:
         model: str = "deepseek-chat",
         temperature: float = 0.3,
         max_tokens: int = 2048,
-        timeout: int = 60,
+        timeout: int = 45,
+        user_agent: str | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url
@@ -25,12 +26,16 @@ class DeepSeekClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.user_agent = user_agent
         self._client = None  # 延迟实例化
 
     def _get_client(self):
         if self._client is None:
             from openai import OpenAI
-            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            kw: dict[str, Any] = {"api_key": self.api_key, "base_url": self.base_url}
+            if self.user_agent:
+                kw["default_headers"] = {"User-Agent": self.user_agent}
+            self._client = OpenAI(**kw)
         return self._client
 
     def chat(
@@ -46,9 +51,20 @@ class DeepSeekClient:
         Returns:
             {"content": str, "tool_calls": list[dict] | None, "raw": ...}
         """
-        from tenacity import retry, stop_after_attempt, wait_exponential
+        from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
+        from tenacity import (
+            retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+        )
 
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+        # 仅对网络/超时/限流/5xx 错误重试；BadRequestError 等参数错误不重试
+        @retry(
+            stop=stop_after_attempt(4),
+            wait=wait_exponential(multiplier=1, min=1, max=8),
+            retry=retry_if_exception_type(
+                (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
+            ),
+            reraise=True,
+        )
         def _call():
             client = self._get_client()
             kw: dict[str, Any] = dict(

@@ -46,6 +46,21 @@ def import_seed_data(seed_dir: Path, db_url: str = "sqlite:///data/grad_school.d
     stats = {"teachers": 0, "schools": 0, "programs": 0, "schedules": 0}
 
     try:
+        # 0. 清空种子数据表（避免重复导入）
+        from sqlalchemy import text as _t
+        for tbl in ("appointments", "teacher_schedule", "school_programs", "schools", "teachers"):
+            session.execute(_t(f"DELETE FROM {tbl}"))
+        # 重置自增（sqlite_sequence 仅在有 AUTOINCREMENT 时存在）
+        try:
+            session.execute(_t(
+                "DELETE FROM sqlite_sequence WHERE name IN "
+                "('appointments','teacher_schedule','school_programs','schools','teachers')"
+            ))
+        except Exception:
+            pass
+        session.commit()
+        print("[init_db] 已清空旧种子数据")
+
         # 1. 导入 schools
         schools_file = seed_dir / "schools.json"
         if schools_file.exists():

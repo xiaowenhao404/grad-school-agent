@@ -31,11 +31,22 @@ class HybridSearch:
         top_k_final: int = 5,
         where: dict | None = None,
     ) -> list[RetrievalResult]:
-        dense_results = self.dense.retrieve(query, top_k_dense, where=where)
-        sparse_results = self.sparse.retrieve(query, top_k_sparse)
+        # dense 失败时返回空，不抛
+        try:
+            dense_results = self.dense.retrieve(query, top_k_dense, where=where)
+        except Exception:
+            dense_results = []
+        # sparse 失败时返回空（bm25.pkl 缺失/损坏都走这里）
+        try:
+            sparse_results = self.sparse.retrieve(query, top_k_sparse)
+        except Exception:
+            sparse_results = []
         # sparse 结果按 metadata 过滤（与 dense 保持一致）
         if where and sparse_results:
             sparse_results = _filter_by_where(sparse_results, where)
+        # 都空就直接返回空
+        if not dense_results and not sparse_results:
+            return []
         fused = self._rrf_fuse(dense_results, sparse_results)
         return fused[:top_k_final]
 

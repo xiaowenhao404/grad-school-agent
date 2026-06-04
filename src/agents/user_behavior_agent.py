@@ -12,12 +12,15 @@ if TYPE_CHECKING:
 
 class UserBehaviorAgent(BaseAgent):
     name = "user_behavior"
+    label_zh = "行为分析机器人"
     prompt_file = "user_behavior.txt"
 
     def run(self, state: "GraphState") -> "GraphState":
         """显式入口：渲染用户画像。"""
         profile = state.get("user_profile", {})
+        self._trace(state, "正在读取您的历史偏好画像…")
         reply = self.display(profile)
+        self._trace(state, "已生成画像总结。")
         state["agent_response"] = reply
         self._append_message(state, "assistant", reply)
         return state
