@@ -106,6 +106,7 @@ settings.local.json
 *.onnx
 data/raw/
 data/interim/
+data/chroma/
 outputs/
 checkpoints/
 wandb/
