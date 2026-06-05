@@ -75,6 +75,7 @@ def _build_school_chunks_from_sqlite() -> list[Document]:
             overview_text = (
                 f"【学校】{names[0] if names else ''}（别名：{', '.join(names[1:])}）\n"
                 f"国家：{school.country}（{school.country_en or ''}），城市：{school.city or ''}，QS：{school.qs_rank}\n"
+                f"地址：{school.address or '—'}\n"
                 f"官网：{school.official_site or ''}\n"
                 f"简介：{school.intro or ''}\n"
                 f"开设项目：{prog_summary}"
