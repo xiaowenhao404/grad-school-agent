@@ -216,11 +216,27 @@ class SchoolSelectionAgent(BaseAgent):
                         snames = ast.literal_eval(snames)
                     except Exception:
                         snames = [snames]
+                # 学费换算成 CNY（调用 currency tool, 实时汇率优先）
+                tuition_native = prog.get("tuition_per_year")
+                native_ccy = (prog.get("currency") or "USD").upper()
+                tuition_cny_str = ""
+                if tuition_native and native_ccy != "CNY":
+                    try:
+                        from src.tools.currency_tool import currency_convert
+                        conv = currency_convert(float(tuition_native), native_ccy, "CNY")
+                        if conv.get("source") in ("live", "fallback"):
+                            tuition_cny_str = f"（≈ ¥{int(conv['amount']):,}/年）"
+                            if not getattr(self, "_currency_trace_logged", False):
+                                self._trace(state, f"💱 调用 currency 工具：{native_ccy}→CNY 汇率 = {conv['rate']:.4f}（{conv['source']}）")
+                                self._currency_trace_logged = True
+                    except Exception:
+                        pass
+
                 card = (
                     f"### 🏫 {snames[0] if snames else '?'} — {pnames[0] if pnames else '?'}\n"
                     f"> {prog.get('description_short') or '—'}\n\n"
                     f"- 🌍 **国家**：{prog.get('country','?')}　**QS**：{prog.get('qs_rank','—')}\n"
-                    f"- 💰 **学费**：{prog.get('tuition_per_year')} {prog.get('currency')}/年　**学制**：{prog.get('duration_months')} 个月\n"
+                    f"- 💰 **学费**：{tuition_native} {native_ccy}/年 {tuition_cny_str}　**学制**：{prog.get('duration_months')} 个月\n"
                     f"- 🎓 **语言**：IELTS≥{prog.get('ielts_min') or '—'}　TOEFL≥{prog.get('toefl_min') or '—'}\n"
                     f"- 🔗 [项目主页]({prog.get('program_url') or prog.get('official_site') or '#'})　·　[📖 完整介绍](#program-{pid})"
                 )

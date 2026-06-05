@@ -58,7 +58,8 @@ class AppointmentAgent(BaseAgent):
             "collect_preferences": "收集老师偏好",
             "show_candidates": "展示候选老师",
             "show_slots": "展示空闲时间",
-            "confirm": "确认预约信息",
+            "confirm": "选择时段",
+            "ask_mode": "线上/线下 + 联系方式",
             "done": "提交预约",
         }.get(stage, stage)
         self._trace(state, f"当前阶段：{stage_zh}")
@@ -71,6 +72,8 @@ class AppointmentAgent(BaseAgent):
             return self._show_slots(state, slots)
         elif stage == "confirm":
             return self._confirm(state, slots)
+        elif stage == "ask_mode":
+            return self._ask_mode(state, slots)
         else:
             return self._done(state, slots)
 
@@ -134,7 +137,21 @@ class AppointmentAgent(BaseAgent):
                 state["user_input"] = "1"
                 return self._show_slots(state, slots)
             else:
-                self._trace(state, f"未找到名为「{tname}」的老师，回退到偏好匹配。")
+                self._trace(state, f"❗ 未找到名为「{tname}」的老师，将回退到偏好匹配。")
+                # 记下"未命中"以便 _show_candidates 在回复开头温柔说明
+                slots["_missed_specific_name"] = tname
+                # 清掉这个临时字段，避免下次 turn 还把它当指定老师
+                prefs.pop("teacher_name", None)
+
+        # ── 个性化兜底：若本轮没给任何偏好，用 user_profile.teacher_prefs 补
+        profile_teacher = (state.get("user_profile") or {}).get("teacher_prefs", {}) or {}
+        injected_from_profile = []
+        for k in ("gender", "expertise_regions", "expertise_majors"):
+            if not prefs.get(k) and profile_teacher.get(k):
+                prefs[k] = profile_teacher[k]
+                injected_from_profile.append(f"{TEACHER_FIELD_LABELS.get(k, k)}={profile_teacher[k]}")
+        if injected_from_profile:
+            self._trace(state, f"📊 行为分析机器人注入了您的历史偏好：{'、'.join(injected_from_profile)}")
 
         # ── 宽松校验：任意一条非空即可直接进入候选展示
         has_any = any(prefs.get(k) and prefs.get(k) != "null"
@@ -202,7 +219,20 @@ class AppointmentAgent(BaseAgent):
             return state
 
         self._trace(state, f"匹配到 {len(candidates)} 位候选老师：{'、'.join(t['name'] for t in candidates)}")
-        lines = ["为您找到以下老师，请输入序号选择：\n"]
+
+        # 温柔提示：之前指定的老师没找到
+        header_lines = []
+        miss = slots.pop("_missed_specific_name", None)
+        if miss:
+            header_lines.append(f"😶 抱歉，未能为您找到名为「**{miss}**」的老师。")
+            header_lines.append("根据您当前的偏好，为您推荐以下几位：\n")
+        elif (state.get("user_profile") or {}).get("teacher_prefs"):
+            # 行为分析有历史偏好被使用过
+            header_lines.append("📊 已结合您的历史偏好进行个性化推荐：\n")
+        else:
+            header_lines.append("为您找到以下老师，请输入序号选择：\n")
+
+        lines = header_lines
         for i, t in enumerate(candidates, 1):
             emoji = '👨' if t['gender'] == 'male' else ('👩' if t['gender'] == 'female' else '🧑')
             bio = (t.get('bio') or '').strip()
@@ -270,17 +300,9 @@ class AppointmentAgent(BaseAgent):
                 slots["selected_slot"] = best
                 duration = prefs.get("duration_min") or 60
                 self._trace(state, f"已为您匹配最接近时段：{best['date']} {best['time_slot']}（时长 {duration} 分钟）")
-                reply = (
-                    f"确认预约信息：\n"
-                    f"- 老师：{selected.get('name')}\n"
-                    f"- 时间：{best['date']} {best['time_slot']}\n"
-                    f"- 时长：{duration} 分钟\n"
-                    "请回复「确认」完成预约，或「重新选择」重来。"
-                )
-                state["agent_response"] = reply
-                self._append_message(state, "assistant", reply)
-                slots["current_stage"] = "done"
-                return state
+                # 直接进入 ask_mode 询问线上/线下
+                slots["current_stage"] = "ask_mode"
+                return self._ask_mode(state, slots, first_round=True)
 
         lines = [f"以下是 {selected['name']} 的可用时间，请输入序号选择："]
         for i, s in enumerate(avail, 1):
@@ -309,17 +331,94 @@ class AppointmentAgent(BaseAgent):
             return state
 
         slots["selected_slot"] = selected_slot
+        # 进入 ask_mode：先问线上/线下，再问联系方式
+        slots["current_stage"] = "ask_mode"
+        return self._ask_mode(state, slots, first_round=True)
+
+    def _ask_mode(self, state, slots, first_round: bool = False):
+        """收集 meeting_mode (online/offline) + contact (phone/wechat)。
+
+        Why: 线上约见需要电话/微信联系；线下需要给地点 + 当地天气提醒。
+        """
         teacher = slots.get("selected_teacher", {})
-        reply = (
-            f"确认预约信息：\n"
-            f"- 老师：{teacher.get('name')}\n"
-            f"- 时间：{selected_slot['date']} {selected_slot['time_slot']}\n"
-            "请回复「确认」完成预约，或「重新选择」重来。"
-        )
-        state["agent_response"] = reply
-        self._append_message(state, "assistant", reply)
+        selected_slot = slots.get("selected_slot", {})
+        mode = slots.get("meeting_mode")  # 'online' or 'offline'
+        contact = slots.get("contact")
+        user_input = state.get("user_input", "").strip()
+
+        # 步骤 1：先问 mode
+        if not mode:
+            if first_round:
+                reply = (
+                    f"已为您锁定 **{teacher.get('name')}** 老师，时间 **{selected_slot['date']} {selected_slot['time_slot']}**。\n\n"
+                    "请问您倾向：\n"
+                    "- **1️⃣ 线上**（视频/电话沟通，需提供联系方式）\n"
+                    "- **2️⃣ 线下**（到公司面谈，将提供当日天气提示）"
+                )
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                return state
+            # 解析用户回答
+            inp = user_input.lower()
+            mode_just_set = False
+            if "1" in inp or "线上" in inp or "online" in inp or "视频" in inp or "电话" in inp:
+                slots["meeting_mode"] = "online"
+                mode = "online"
+                mode_just_set = True
+                self._trace(state, "用户选择：线上沟通")
+            elif "2" in inp or "线下" in inp or "offline" in inp or "面谈" in inp or "到店" in inp:
+                slots["meeting_mode"] = "offline"
+                mode = "offline"
+                mode_just_set = True
+                self._trace(state, "用户选择：线下面谈")
+            else:
+                reply = "请回复 **1**（线上）或 **2**（线下）。"
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                return state
+            # 刚识别到 mode → 给一个明确"下一轮请提供联系方式"提示，不要复用本轮 user_input 尝试解析 contact
+            if mode == "online":
+                reply = (
+                    "好的，已选择 **线上沟通**。\n\n"
+                    "请提供您的**联系方式**（11 位手机号 或 微信号），老师将通过此方式与您联系。"
+                )
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                return state
+            # mode=offline：不需要 contact，直接走到 done（下面的逻辑）
+            _ = mode_just_set  # silence linter
+
+        # 步骤 2：线上 → 必须问联系方式
+        if mode == "online" and not contact:
+            # 如果本轮输入像是联系方式，直接收下
+            if first_round or not user_input:
+                reply = "请提供您的**联系方式**（手机号或微信号），老师将通过此方式电话联系您。"
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                return state
+            # 简单识别：含 11 位数字 / "微信" / "vx" / "wx"
+            phone_m = re.search(r"1\d{10}", user_input)
+            wechat_m = re.search(r"(?:微信|vx|wx)[:：\s]*([A-Za-z0-9_-]{4,})", user_input)
+            if phone_m:
+                slots["contact"] = phone_m.group()
+                self._trace(state, f"已记录联系方式：{phone_m.group()[:3]}****{phone_m.group()[-4:]}（电话）")
+            elif wechat_m:
+                slots["contact"] = "微信: " + wechat_m.group(1)
+                self._trace(state, f"已记录联系方式：微信 {wechat_m.group(1)}")
+            elif len(user_input) >= 4:
+                slots["contact"] = user_input[:50]
+                self._trace(state, "已记录联系方式")
+            else:
+                reply = "联系方式格式无效，请提供 11 位手机号或微信号。"
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                return state
+
+        # 步骤 3：信息齐全 → 进入 done，由 _done 调天气工具并写库
         slots["current_stage"] = "done"
-        return state
+        # 用一个"确认"虚拟输入触发 _done
+        state["user_input"] = "确认"
+        return self._done(state, slots)
 
     def _done(self, state, slots):
         user_input = state.get("user_input", "").lower()
@@ -337,12 +436,16 @@ class AppointmentAgent(BaseAgent):
         slot = slots.get("selected_slot", {})
         prefs = slots.get("collected_preferences", {})
         duration = prefs.get("duration_min") or 60
+        mode = slots.get("meeting_mode") or "online"
+        contact = slots.get("contact") or ""
+        mode_zh = "线上" if mode == "online" else "线下"
+
         try:
-            self._trace(state, f"正在写入数据库：{teacher.get('name')} @ {slot.get('date')} {slot.get('time_slot')}（时长 {duration} 分钟）")
+            self._trace(state, f"正在写入数据库：{teacher.get('name')} @ {slot.get('date')} {slot.get('time_slot')}（{mode_zh}，时长 {duration} 分钟）")
             repo = AppointmentRepository(engine=get_engine())
-            # 把时长拼进 topic 字段，避免改 schema 也能保留信息
+            # 把时长 + 模式 + 联系方式拼进 topic
             topic = state.get("user_input", "")
-            topic_with_dur = (topic + f" [时长: {duration}min]").strip()
+            topic_with_dur = (topic + f" [时长:{duration}min|{mode_zh}|{contact}]").strip()
             appt_id = repo.create(
                 user_id=state.get("user_id", 1),
                 teacher_id=teacher["id"],
@@ -350,12 +453,27 @@ class AppointmentAgent(BaseAgent):
                 topic=topic_with_dur,
             )
             self._trace(state, f"预约成功，订单号 #{appt_id}，时段已置为已预订。")
+
+            # 个性化回复：线上 → 提醒联系；线下 → 调天气工具
+            extra_lines = []
+            if mode == "online":
+                extra_lines.append(f"- ☎️ 联系方式：{contact}")
+                extra_lines.append(f"\n💬 **{teacher.get('name')}** 老师将在该时段通过您提供的联系方式与您沟通，请保持畅通。")
+            else:
+                # 线下：调天气工具
+                extra_lines.append("- 📍 地点：到访我司线下咨询室")
+                weather_line = self._fetch_weather_line(state, slot.get("date"))
+                if weather_line:
+                    extra_lines.append(weather_line)
+                extra_lines.append(f"\n💬 请提前 10 分钟到达，**{teacher.get('name')}** 老师将在咨询室等候。")
+
             reply = (
                 f"✅ **预约成功！** 订单号：#{appt_id}\n\n"
                 f"- 👨‍🏫 老师：{teacher.get('name')}\n"
                 f"- 🕐 时间：{slot['date']} {slot['time_slot']}\n"
-                f"- ⏱️ 时长：{duration} 分钟\n\n"
-                f"{teacher.get('name')} 将届时与您联系，请保持手机畅通。"
+                f"- ⏱️ 时长：{duration} 分钟\n"
+                f"- 💼 形式：{mode_zh}\n"
+                + "\n".join(extra_lines)
             )
             slots.clear()
         except ValueError as e:
@@ -366,3 +484,26 @@ class AppointmentAgent(BaseAgent):
         state["agent_response"] = reply
         self._append_message(state, "assistant", reply)
         return state
+
+    def _fetch_weather_line(self, state, date_str: str | None) -> str:
+        """对线下预约，调 weather tool 查公司所在地（上海）当日天气，给个性化提示。"""
+        from src.tools.weather_tool import weather_query
+        try:
+            self._trace(state, "🌤️ 调用 weather 工具查询当日天气…")
+            w = weather_query("Shanghai")
+        except Exception as e:
+            self._trace(state, f"⚠️ 天气查询失败：{type(e).__name__}")
+            return ""
+        if w.get("source") == "unavailable":
+            return ""
+        cond = w.get("condition", "")
+        temp = w.get("temp_c")
+        tip = ""
+        c = cond.lower() if isinstance(cond, str) else ""
+        if "雨" in cond or "rain" in c or "shower" in c:
+            tip = "建议携带雨具 ☔"
+        elif temp is not None and temp >= 30:
+            tip = "天气炎热，请注意防暑 ☀️"
+        elif temp is not None and temp <= 10:
+            tip = "气温较低，请注意保暖 🧥"
+        return f"- 🌤️ {date_str or '当日'}上海天气：{cond}，{temp}°C{'，' + tip if tip else ''}"
