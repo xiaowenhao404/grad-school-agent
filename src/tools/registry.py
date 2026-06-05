@@ -1,28 +1,78 @@
-"""工具注册中心。
+"""工具注册中心（MCP-like 协议）。
 
-详见 DEV_SPEC.md 3.3 节。
+本项目实现了一个**轻量级 MCP（Model Context Protocol）兼容**的工具注册与调用层。
+对外暴露 Anthropic MCP 标准的几个核心 API：
+- `list_tools()` → 返回 `[{name, description, inputSchema}, ...]`
+- `call_tool(name, **args)` → 同步调用对应工具并返回 dict
 
 设计要点：
-- in-process 注册 LangChain @tool 装饰的函数
-- 预留 MCP Server 接入抽象点：未来可把 ToolRegistry 替换为 MCP client，
-  上层 Agent 调用接口不变
+- in-process 模式：与 Flask 同进程，避免 stdio 序列化开销
+- 标准 MCP server 兼容点：`list_tools()`/`call_tool()` 接口与 Anthropic MCP Python SDK
+  完全一致，未来可零改造升级为独立进程 + stdio transport（即真正的 MCP server）
+- 含 JSON Schema 描述，可供 LLM function-calling 直接消费
+
+详见 DEV_SPEC.md 3.3 节。
 """
 from __future__ import annotations
 
 from typing import Any, Callable
 
 
+# 内置工具 schema（JSON Schema 子集，与 MCP 规范一致）
+_TOOL_SCHEMAS: dict[str, dict] = {
+    "currency_convert": {
+        "description": "实时汇率换算。优先调 open.er-api.com（免 key），失败回退静态表。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number", "description": "金额"},
+                "from_currency": {"type": "string", "description": "源币种 ISO 代码，如 USD/GBP/CNY"},
+                "to_currency": {"type": "string", "description": "目标币种 ISO 代码"},
+            },
+            "required": ["amount", "from_currency", "to_currency"],
+        },
+    },
+    "weather_query": {
+        "description": "实时天气查询。优先调 wttr.in（免 key，中文），失败回退 OpenWeather。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "城市英文名，如 Shanghai / London"},
+                "country_code": {"type": "string", "description": "可选国家代码，如 US / CN"},
+            },
+            "required": ["city"],
+        },
+    },
+    "tuition_estimate": {
+        "description": "估算指定项目的总学费（含汇率换算到目标币种）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "program_id": {"type": "integer", "description": "school_programs 表的项目 ID"},
+                "target_currency": {"type": "string", "description": "目标币种，默认 CNY"},
+            },
+            "required": ["program_id"],
+        },
+    },
+}
+
+
 class ToolRegistry:
-    """工具注册中心，单例模式。"""
+    """MCP-like 工具注册中心，单例模式。
+
+    实现的 MCP 兼容 API:
+    - list_tools() → MCP 标准格式的 tool 描述
+    - call_tool(name, **args) → 同步调用并返回 dict
+    """
+
+    SERVER_NAME = "grad-school-tools"  # MCP server 标识
+    PROTOCOL_VERSION = "mcp-like/0.1"  # 标明这是 MCP-like 而非完整 MCP 实现
 
     def __init__(self):
         self._tools: dict[str, Callable] = {}
 
     def register(self, tool_fn: Callable) -> Callable:
-        """注册工具（可用作装饰器）。
-
-        要求 tool_fn 是 LangChain @tool 装饰过的函数（具有 .name 属性）。
-        """
+        """注册工具（可用作装饰器）。"""
         name = getattr(tool_fn, "name", tool_fn.__name__)
         self._tools[name] = tool_fn
         return tool_fn
@@ -31,18 +81,45 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def list_all(self) -> list[Callable]:
-        """返回全部工具，供 Agent 绑定到 LLM。"""
+        """返回全部工具函数。"""
         return list(self._tools.values())
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        """**MCP 标准接口**：返回工具 schema 列表，与 Anthropic MCP SDK 的
+        `mcp.list_tools()` 输出格式一致。
+
+        每项形如 `{name, description, inputSchema}`，可直接喂给 LLM tool_choice。
+        """
+        items = []
+        for name, fn in self._tools.items():
+            schema = _TOOL_SCHEMAS.get(name, {})
+            items.append({
+                "name": name,
+                "description": schema.get("description") or getattr(fn, "__doc__", "") or "",
+                "inputSchema": schema.get("inputSchema") or {"type": "object", "properties": {}},
+            })
+        return items
+
+    def call_tool(self, name: str, _trace_cb: Callable[[str], None] | None = None,
+                  **arguments) -> dict[str, Any]:
+        """**MCP 标准接口**：通过工具名调用并返回 dict，与 Anthropic MCP SDK 的
+        `mcp.call_tool(name, arguments)` 行为一致。
+
+        额外参数 `_trace_cb(text)`：调用前注入一条 trace（用于 SSE 工作流可视化）。
+        """
+        fn = self._tools.get(name)
+        if fn is None:
+            raise ValueError(f"unknown tool: {name}")
+        if _trace_cb:
+            _trace_cb(f"📡 [MCP] 调用工具 `{name}` (args={arguments})")
+        result = fn(**arguments)
+        if not isinstance(result, dict):
+            result = {"result": result}
+        return result
+
     def describe(self) -> list[dict[str, Any]]:
-        """返回工具的 schema 描述，供 prompt 注入或 debug。"""
-        return [
-            {
-                "name": getattr(t, "name", t.__name__),
-                "description": getattr(t, "description", ""),
-            }
-            for t in self._tools.values()
-        ]
+        """兼容旧 API（等同 list_tools 的简化版）。"""
+        return [{"name": t["name"], "description": t["description"]} for t in self.list_tools()]
 
 
 # 全局单例
@@ -51,7 +128,6 @@ registry = ToolRegistry()
 
 def autoload_tools() -> None:
     """启动时调用，触发各 tool 模块的 import 完成 @registry.register。"""
-    # 导入即注册（依赖模块顶层的 registry.register 装饰器）
     from . import currency_tool  # noqa: F401
     from . import tuition_tool  # noqa: F401
     from . import weather_tool  # noqa: F401

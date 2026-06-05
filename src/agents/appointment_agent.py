@@ -486,11 +486,15 @@ class AppointmentAgent(BaseAgent):
         return state
 
     def _fetch_weather_line(self, state, date_str: str | None) -> str:
-        """对线下预约，调 weather tool 查公司所在地（上海）当日天气，给个性化提示。"""
-        from src.tools.weather_tool import weather_query
+        """对线下预约，通过 MCP-like tool registry 查公司所在地（上海）当日天气，给个性化提示。"""
+        from src.tools.registry import registry
         try:
-            self._trace(state, "🌤️ 调用 weather 工具查询当日天气…")
-            w = weather_query("Shanghai")
+            self._trace(state, "🌤️ 通过 MCP-like 协议调用 weather_query 工具…")
+            w = registry.call_tool(
+                "weather_query",
+                _trace_cb=lambda txt: self._trace(state, txt),
+                city="Shanghai",
+            )
         except Exception as e:
             self._trace(state, f"⚠️ 天气查询失败：{type(e).__name__}")
             return ""

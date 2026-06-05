@@ -216,19 +216,24 @@ class SchoolSelectionAgent(BaseAgent):
                         snames = ast.literal_eval(snames)
                     except Exception:
                         snames = [snames]
-                # 学费换算成 CNY（调用 currency tool, 实时汇率优先）
+                # 学费换算成 CNY（通过 MCP-like 协议调用 currency tool）
                 tuition_native = prog.get("tuition_per_year")
                 native_ccy = (prog.get("currency") or "USD").upper()
                 tuition_cny_str = ""
                 if tuition_native and native_ccy != "CNY":
                     try:
-                        from src.tools.currency_tool import currency_convert
-                        conv = currency_convert(float(tuition_native), native_ccy, "CNY")
+                        from src.tools.registry import registry
+                        if not getattr(self, "_currency_trace_logged", False):
+                            self._trace(state, f"💱 通过 MCP-like 协议调用 currency_convert 工具：{native_ccy}→CNY…")
+                            self._currency_trace_logged = True
+                        conv = registry.call_tool(
+                            "currency_convert",
+                            amount=float(tuition_native),
+                            from_currency=native_ccy,
+                            to_currency="CNY",
+                        )
                         if conv.get("source") in ("live", "fallback"):
                             tuition_cny_str = f"（≈ ¥{int(conv['amount']):,}/年）"
-                            if not getattr(self, "_currency_trace_logged", False):
-                                self._trace(state, f"💱 调用 currency 工具：{native_ccy}→CNY 汇率 = {conv['rate']:.4f}（{conv['source']}）")
-                                self._currency_trace_logged = True
                     except Exception:
                         pass
 

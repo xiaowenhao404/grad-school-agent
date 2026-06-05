@@ -331,6 +331,42 @@ def api_program_detail(pid: int):
     return jsonify(p)
 
 
+# ── MCP-like tools 服务（演示项目内置的 MCP-like server） ────────────────────
+
+@app.route("/api/mcp/tools")
+def api_mcp_list_tools():
+    """**MCP 标准接口**：返回 server 暴露的所有工具的 schema 列表。
+
+    用法等同 Anthropic MCP SDK 的 `mcp.list_tools()`。
+    """
+    from src.tools.registry import registry, autoload_tools
+    autoload_tools()
+    return jsonify({
+        "server": registry.SERVER_NAME,
+        "protocol": registry.PROTOCOL_VERSION,
+        "tools": registry.list_tools(),
+    })
+
+
+@app.route("/api/mcp/call/<name>", methods=["POST"])
+def api_mcp_call_tool(name: str):
+    """**MCP 标准接口**：调用指定工具并返回结果。
+
+    用法等同 Anthropic MCP SDK 的 `mcp.call_tool(name, arguments)`。
+    """
+    from src.tools.registry import registry, autoload_tools
+    autoload_tools()
+    args = request.json or {}
+    try:
+        result = registry.call_tool(name, **args)
+        return jsonify({"server": registry.SERVER_NAME, "tool": name,
+                        "arguments": args, "result": result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
+
+
 # ── Schedule slot CRUD ───────────────────────────────────────────────────────
 
 @app.route("/api/schedule", methods=["POST"])
