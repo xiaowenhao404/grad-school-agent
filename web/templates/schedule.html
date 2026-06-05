@@ -190,5 +190,27 @@ async function submitSlot() {
 document.getElementById('add-mask').addEventListener('click', e => {
   if (e.target.id === 'add-mask') closeAdd();
 });
+
+// 每 20 秒静默 polling 当日时段状态；如有变化（如对话框完成预约）则刷页
+(function startSchedulePolling() {
+  let lastSignature = null;
+  async function pollOnce() {
+    try {
+      const r = await fetch('/api/schedule/snapshot?date=' + encodeURIComponent(SEL_DATE));
+      if (!r.ok) return;
+      const data = await r.json();
+      const sig = JSON.stringify((data.items || []).map(s => [s.id, s.status]));
+      if (lastSignature !== null && sig !== lastSignature) {
+        // 状态有变化（如新预约 / 状态切换），刷新页面以反映
+        location.reload();
+        return;
+      }
+      lastSignature = sig;
+    } catch (_) { /* 静默失败，不打扰用户 */ }
+  }
+  // 启动后 2s 拿基线，之后每 20s 比对
+  setTimeout(pollOnce, 2000);
+  setInterval(pollOnce, 20000);
+})();
 </script>
 {% endblock %}

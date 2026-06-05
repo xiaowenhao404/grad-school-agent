@@ -364,6 +364,22 @@ def api_schedule_set_status(sid: int):
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/schedule/snapshot")
+def api_schedule_snapshot():
+    """轻量 polling 端点：返回指定日期所有时段的 (id, status) 列表，
+    供 schedule 页面前端比对以决定是否 reload（预约后自动反映）。"""
+    from src.db.repositories.teacher_repo import TeacherScheduleRepository
+    date = (request.args.get("date") or "").strip()
+    if not date:
+        return jsonify({"items": []})
+    try:
+        items = TeacherScheduleRepository().list_by_date(date)
+        # 仅返回 id + status，最小化网络流量
+        return jsonify({"items": [{"id": s["id"], "status": s["status"]} for s in items]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Knowledge details ────────────────────────────────────────────────────────
 
 @app.route("/api/knowledge/<kind>")
