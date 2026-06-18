@@ -3,6 +3,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+
+# Windows 中文终端默认 GBK 编码，打印含 emoji 的启动横幅/日志会触发
+# UnicodeEncodeError 而导致进程崩溃。统一把 stdout/stderr 切到 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from flask import Flask, Response, render_template, request, jsonify, session
 
 app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
