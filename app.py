@@ -88,6 +88,20 @@ def schedule():
     for s in day_slots:
         slots_by_tid.setdefault(s["teacher_id"], []).append(s)
 
+    # 计算时间轴窗口（小时）：默认营业 9-22，但若当天有时段超出则自动扩展，
+    # 避免晨间/夜间时段被裁剪（此前硬编码 12-22 导致 09:00 等晨间时段不显示）
+    win_start_h, win_end_h = 9, 22
+    for s in day_slots:
+        try:
+            ts = s["time_slot"]
+            sh = int(ts.split("-")[0].split(":")[0])
+            ep = ts.split("-")[1].split(":")
+            eh = int(ep[0]) + (1 if int(ep[1]) > 0 else 0)  # 末段不足整点向上取整
+            win_start_h = min(win_start_h, sh)
+            win_end_h = max(win_end_h, eh)
+        except (ValueError, IndexError):
+            continue
+
     return render_template(
         "schedule.html",
         teachers=teachers,
@@ -95,6 +109,8 @@ def schedule():
         sel_date=sel_date,
         all_dates=all_dates,
         today=today,
+        win_start_h=win_start_h,
+        win_end_h=win_end_h,
     )
 
 
