@@ -8,9 +8,9 @@
 
 面向出国申研场景的对话式智能助手，背后由多个分工明确的 Agent 协作：
 
-- **咨询机器人**：回答签证指南、公司介绍、服务说明等通用问题
-- **选校机器人**：根据偏好（学费 / QS / 国家 / 专业 / 语言要求）匹配学校项目
-- **预约机器人**：根据偏好匹配咨询老师，查询时间，完成预约
+- **咨询机器人**：回答签证指南、公司介绍、服务说明等通用问题，支持具体学校/项目简介
+- **选校机器人**：根据偏好（学费 / QS / 国家 / 专业 / 语言要求）匹配学校项目，学费实时换算 CNY
+- **预约机器人**：多轮状态机匹配咨询老师，支持指定老师/指定日期与时间，线上（收集联系方式）/ 线下（提供当日天气提示）两种形式，完成后写入数据库并反映到时间表
 - **行为分析**：可开关的偏好记忆，自动用于个性化推荐
 
 详细设计见 [`DEV_SPEC.md`](DEV_SPEC.md)。
@@ -46,6 +46,17 @@ uv run python app.py
 ```
 
 或参考 `.claude/skills/setup-environment` 一键配置。
+
+## MCP-like 工具服务
+
+工具调用层（`src/tools/`）实现了与 Anthropic MCP SDK 接口一致的 `list_tools()` / `call_tool()`，并暴露两个 HTTP 端点用于演示与排障：
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/mcp/tools` | GET | 返回 server 暴露的全部工具 schema（等价 `mcp.list_tools()`） |
+| `/api/mcp/call/<name>` | POST | 调用指定工具，body 为 JSON 参数（等价 `mcp.call_tool(name, args)`） |
+
+内置工具：`currency_convert`（实时汇率，open.er-api）、`weather_query`（实时天气，wttr.in）、`tuition_estimate`（学费估算）。对话流程中由选校 / 预约 Agent 通过该层调用，trace 会显示「通过 MCP-like 协议调用工具」。
 
 ## 目录结构
 
