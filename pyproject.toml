@@ -12,11 +12,14 @@ dependencies = [
     "openai>=1.30.0",            # DeepSeek 兼容 OpenAI SDK
     "langchain>=0.3.0",
     "langchain-community>=0.3.0",
+    "langchain-text-splitters>=0.3.0",  # RecursiveCharacterTextSplitter
     "langgraph>=0.2.0",
 
     # RAG
     "chromadb>=0.5.0",
     "rank-bm25>=0.2.2",
+    "jieba>=0.42.1",                 # BM25 稀疏检索的中文分词
+    "numpy>=1.26",                   # BM25 打分排序
     "sentence-transformers>=3.0.0",  # 可选：本地 BGE embedding
 
     # Data
@@ -31,8 +34,9 @@ dependencies = [
     "pypdf>=4.3",
     "markitdown>=0.0.1a3",
 
-    # Frontend
-    "streamlit>=1.36",
+    # Frontend（Flask + Waitress，已替代旧的 Streamlit 多页面设计）
+    "flask>=3.0",
+    "waitress>=3.0",
 
     # External tools
     "requests>=2.32",
@@ -58,6 +62,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+# 中文路径下不把项目自身装成「可编辑包」：否则 uv 生成的 .pth 会写入中文路径，
+# Python 3.11 在 Windows 上用 GBK 读取 .pth 会触发 UnicodeDecodeError 导致解释器无法启动。
+# 从项目根目录运行（uv run python app.py）时，`import src.*` 由当前工作目录提供，无需安装本包。
+[tool.uv]
+package = false
 
 [tool.ruff]
 line-length = 100
