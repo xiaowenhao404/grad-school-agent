@@ -23,12 +23,15 @@
 
 ## 开发环境
 
-- Python：`D:\anaconda\envs\NLP-Lab\python.exe`（Anaconda 子环境）
+- 包管理：**uv**（依赖见 `pyproject.toml`；已设 `[tool.uv] package = false`，避免中文路径下生成 .pth 触发 GBK 解码崩溃）
+- Python 解释器：`.venv\Scripts\python.exe`（`uv sync` 自动创建，CPython 3.11.9）
 - Web 服务器：**Waitress**（不要用 Flask dev server，Windows 上有 SSE/socket bug）
-- 启动：`D:\anaconda\envs\NLP-Lab\python.exe app.py`
+- 启动：`.venv\Scripts\python.exe app.py`（或 `python -m uv run python app.py`）
+- 重建环境：`python -m uv sync`（依赖变更后；从缓存装很快）
 - 数据库：`data/grad_school.db`（SQLite）
 - 向量库：`data/chroma/`（含 3 个 collection：schools / teachers / internal_docs）
-- LLM 配置：`.env`（已套用 Claude proxy + UA header）
+- Embedding：本地 BGE `./models/bge-small-zh-v1.5`（offline，零成本）
+- LLM 配置：`.env`（Claude proxy + UA header；`base_url=https://daodunapi.com/v1`，模型 `claude-opus-4-8`）
 
 ---
 
@@ -59,6 +62,6 @@
 每次重要改动后：
 
 ```powershell
-D:\anaconda\envs\NLP-Lab\python.exe app.py
+.venv\Scripts\python.exe app.py
 # 浏览器开 http://127.0.0.1:5000 实测影响的功能
 ```

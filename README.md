@@ -2,7 +2,7 @@
 
 > **申研选校预约系统** — 自然语言处理课程项目
 >
-> 多 Agent 协作 + Hybrid RAG + Streamlit 前端
+> 多 Agent 协作 + Hybrid RAG + MCP-like 工具调用 + Flask 前端
 
 ## 项目简介
 
@@ -20,10 +20,12 @@
 | 类别 | 选型 |
 |------|------|
 | Agent 编排 | LangGraph |
-| LLM | DeepSeek API（兼容 OpenAI SDK） |
-| RAG | Chroma + BM25 + RRF 混合检索 |
+| LLM | OpenAI 兼容 API（DeepSeek / Claude proxy，可配置） |
+| Embedding | 本地 BGE（sentence-transformers，offline） |
+| RAG | Chroma + BM25（jieba）+ RRF 混合检索 |
+| 工具调用 | MCP-like 协议（list_tools / call_tool + JSON Schema） |
 | 数据库 | SQLite + SQLAlchemy |
-| 前端 | Streamlit 多页面 |
+| 前端 | Flask + Waitress + SSE 流式 |
 | 包管理 | uv |
 
 ## 快速开始
@@ -34,13 +36,13 @@ uv sync
 
 # 2. 配置环境变量
 cp .env.example .env  # Windows: copy .env.example .env
-# 编辑 .env 填入 DeepSeek API key
+# 编辑 .env 填入 LLM API key（DeepSeek 或 Claude proxy）
 
 # 3. 初始化数据库与 seed 数据
 uv run python -m src.db.init_db
 
-# 4. 启动 Streamlit
-uv run streamlit run app.py
+# 4. 启动（Waitress，浏览器开 http://127.0.0.1:5000）
+uv run python app.py
 ```
 
 或参考 `.claude/skills/setup-environment` 一键配置。
@@ -50,19 +52,22 @@ uv run streamlit run app.py
 详见 [`DEV_SPEC.md` 第 4.2 节](DEV_SPEC.md#42-目录结构)。核心：
 
 ```
+app.py              # Flask 入口（Waitress 启动 + SSE 流式对话）
 src/
 ├── agents/         # 5 个核心 Agent
 ├── graph/          # LangGraph 编排
 ├── rag/            # Hybrid RAG 流水线
-├── tools/          # LangChain Tools（预留 MCP 接入）
+├── tools/          # MCP-like 工具注册中心（汇率 / 天气 / 学费）
 ├── runtime_skills/ # 运行时领域 skill 插件（项目亮点）
 ├── db/             # SQLite + Repositories
 ├── services/       # 业务服务层
-└── llm/            # DeepSeek / Embedding 客户端
+└── llm/            # LLM / Embedding 客户端
 
-ui/                 # Streamlit 5 个页面
+web/                # Flask 模板（templates）+ 静态资源（static）
 .claude/skills/     # Claude Code 开发期辅助 skill
 ```
+
+> 注：`ui/` 为早期 Streamlit 多页面设计，已被 Flask（`app.py` + `web/`）替代，保留仅作参考。
 
 ## 仓库信息
 
