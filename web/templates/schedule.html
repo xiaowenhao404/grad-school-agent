@@ -71,7 +71,7 @@
                     style="left:{{ '%.2f'|format(left_pct) }}%;width:{{ '%.2f'|format(width_pct) }}%;"
                     title="{{ s.time_slot }}（点击切换状态）"
                     onclick="cycleSlot(this)">
-                {% if width_pct >= 8 %}🍃{{ s.time_slot }}{% endif %}
+                {% if width_pct >= 13 %}{{ s.time_slot }}{% elif width_pct >= 4.5 %}{{ parts[0] }}{% endif %}
               </span>
             {% endif %}
           {% endif %}
