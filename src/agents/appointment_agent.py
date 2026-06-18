@@ -94,7 +94,7 @@ class AppointmentAgent(BaseAgent):
             "- 『男老师』⇒ male；『女老师』⇒ female；未指定 ⇒ null（不要瞎写 any）\n"
             "- 『美国留学』『英国申请』⇒ expertise_regions 写国家中文\n"
             "- CS/AI/计算机/商科/金融 ⇒ expertise_majors\n"
-            "- **预约时间**：『明天下午 3 点』/『6 月 15 日 14:00』/『下周三上午十点』⇒ start_time 写 ISO 格式 YYYY-MM-DD HH:MM。今天日期作为参考基准：" + str(__import__('datetime').date.today()) + "\n"
+            "- **预约时间（重要！）**：用户提到任何日期表达（『6月5日』『明天』『下周三』『2026-06-05』）⇒ start_time 必须写 ISO 格式 YYYY-MM-DD HH:MM；如果只有日期没具体小时，HH:MM 部分用 00:00。今天日期作为参考基准：" + str(__import__('datetime').date.today()) + "\n"
             "- **时长**：『1 小时』⇒ 60；『半小时』⇒ 30；『两小时』⇒ 120；未指定 ⇒ null（系统会默认 60）\n"
             f"\n【本轮用户输入】{state.get('user_input','')}"
         )
@@ -278,6 +278,63 @@ class AppointmentAgent(BaseAgent):
         slots["selected_teacher"] = selected
         self._trace(state, f"用户已选择 {selected['name']} 老师，正在查询其空闲时段…")
         repo = TeacherScheduleRepository(engine=get_engine())
+
+        # ── 用户已指定日期/时间：按日期过滤，命中则进 confirm，未命中则明确告知 + 提供其他时段 + 换老师选项
+        prefs = slots.get("collected_preferences", {})
+        wanted_start = (prefs.get("start_time") or "").strip()
+        wanted_date = wanted_start[:10] if len(wanted_start) >= 10 else ""
+
+        if wanted_date:
+            all_av = repo.list_available(selected["id"], limit=999)
+            on_date = [s for s in all_av if s["date"] == wanted_date]
+            # 区分"只给日期"与"给了具体钟点"：LLM 对纯日期填占位 00:00
+            wanted_time = wanted_start[11:16] if len(wanted_start) >= 16 else ""
+            has_specific_hour = bool(wanted_time) and wanted_time != "00:00"
+            if on_date:
+                self._trace(state, f"{selected['name']} 在 {wanted_date} 有 {len(on_date)} 个空闲时段。")
+                # 既指定日期又指定具体小时 → 自动 closest match → 进 ask_mode
+                if has_specific_hour:
+                    best = _pick_closest_slot(on_date, wanted_start)
+                    if best:
+                        slots["selected_slot"] = best
+                        slots["available_slots"] = on_date
+                        duration = prefs.get("duration_min") or 60
+                        self._trace(state, f"已为您匹配最接近时段：{best['date']} {best['time_slot']}（时长 {duration} 分钟）")
+                        slots["current_stage"] = "ask_mode"
+                        return self._ask_mode(state, slots, first_round=True)
+                # 仅指定日期 → 列出当日所有时段
+                slots["available_slots"] = on_date
+                lines = [f"{selected['name']} 老师在 **{wanted_date}** 的可用时段，请输入序号选择："]
+                for i, s in enumerate(on_date, 1):
+                    lines.append(f"{i}. {s['date']} {s['time_slot']}")
+                reply = "\n".join(lines)
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                slots["current_stage"] = "confirm"
+                return state
+            else:
+                # 该老师该日无空 → 明确告知 + 列出最近的其他时段 + 提供「换老师」选项
+                other = all_av[:5]
+                slots["available_slots"] = other
+                prefs.pop("start_time", None)  # 已告知不可用，下一轮无需再匹配
+                self._trace(state, f"❗ {selected['name']} 在 {wanted_date} 无空闲，已列出最近 {len(other)} 个其他时段。")
+                lines = [
+                    f"😶 抱歉，**{selected['name']}** 老师在 **{wanted_date}** 没有空闲时段。",
+                    "",
+                    "您可以：",
+                    f"- 从 {selected['name']} 的其他空闲时段中选一个（输入序号）：",
+                ]
+                for i, s in enumerate(other, 1):
+                    lines.append(f"  {i}. {s['date']} {s['time_slot']}")
+                lines.append("")
+                lines.append("- 或回复「**换老师**」让我重新推荐其他老师。")
+                reply = "\n".join(lines)
+                state["agent_response"] = reply
+                self._append_message(state, "assistant", reply)
+                slots["current_stage"] = "confirm"
+                return state
+
+        # ── 默认分支：用户未指定日期，取前 5 个
         avail = repo.list_available(selected["id"], limit=5)
         slots["available_slots"] = avail
 
@@ -290,19 +347,6 @@ class AppointmentAgent(BaseAgent):
             return state
 
         self._trace(state, f"找到 {len(avail)} 个可预约时段。")
-
-        # 如果用户已指定 start_time，自动定位最接近的时段，跳过手动选号
-        prefs = slots.get("collected_preferences", {})
-        wanted_start = (prefs.get("start_time") or "").strip()
-        if wanted_start:
-            best = _pick_closest_slot(avail, wanted_start)
-            if best:
-                slots["selected_slot"] = best
-                duration = prefs.get("duration_min") or 60
-                self._trace(state, f"已为您匹配最接近时段：{best['date']} {best['time_slot']}（时长 {duration} 分钟）")
-                # 直接进入 ask_mode 询问线上/线下
-                slots["current_stage"] = "ask_mode"
-                return self._ask_mode(state, slots, first_round=True)
 
         lines = [f"以下是 {selected['name']} 的可用时间，请输入序号选择："]
         for i, s in enumerate(avail, 1):
@@ -318,6 +362,15 @@ class AppointmentAgent(BaseAgent):
         avail = slots.get("available_slots", [])
         selected_slot = None
 
+        # 用户主动要求换老师 → 回到 show_candidates，让 _show_candidates 重新挑
+        if re.search(r"换老师|换个老师|其他老师|别的老师", user_input):
+            self._trace(state, "用户要求换老师，返回候选列表。")
+            # 清掉当前选择，保留 collected_preferences
+            slots.pop("selected_teacher", None)
+            slots.pop("available_slots", None)
+            slots["current_stage"] = "show_candidates"
+            return self._show_candidates(state, slots)
+
         m = re.search(r"[1-5]", user_input)
         if m and avail:
             idx = int(m.group()) - 1
@@ -325,7 +378,7 @@ class AppointmentAgent(BaseAgent):
                 selected_slot = avail[idx]
 
         if not selected_slot:
-            reply = "请输入序号选择时间段。"
+            reply = "请输入序号选择时间段，或回复「**换老师**」让我重新推荐。"
             state["agent_response"] = reply
             self._append_message(state, "assistant", reply)
             return state
@@ -376,8 +429,23 @@ class AppointmentAgent(BaseAgent):
                 state["agent_response"] = reply
                 self._append_message(state, "assistant", reply)
                 return state
-            # 刚识别到 mode → 给一个明确"下一轮请提供联系方式"提示，不要复用本轮 user_input 尝试解析 contact
+            # 刚识别到 mode=online → 先尝试从同一句里提取联系方式（避免逼用户重复输入）
             if mode == "online":
+                phone_m = re.search(r"1\d{10}", user_input)
+                wechat_m = re.search(r"(?:微信|vx|wx)[:：\s]*([A-Za-z0-9_-]{4,})", user_input)
+                if phone_m:
+                    slots["contact"] = phone_m.group()
+                    self._trace(state, f"已从同句中识别联系方式：{phone_m.group()[:3]}****{phone_m.group()[-4:]}（电话）")
+                    slots["current_stage"] = "done"
+                    state["user_input"] = "确认"
+                    return self._done(state, slots)
+                if wechat_m:
+                    slots["contact"] = "微信: " + wechat_m.group(1)
+                    self._trace(state, f"已从同句中识别联系方式：微信 {wechat_m.group(1)}")
+                    slots["current_stage"] = "done"
+                    state["user_input"] = "确认"
+                    return self._done(state, slots)
+                # 没附带联系方式 → 下一轮请求
                 reply = (
                     "好的，已选择 **线上沟通**。\n\n"
                     "请提供您的**联系方式**（11 位手机号 或 微信号），老师将通过此方式与您联系。"
@@ -474,6 +542,7 @@ class AppointmentAgent(BaseAgent):
                 f"- ⏱️ 时长：{duration} 分钟\n"
                 f"- 💼 形式：{mode_zh}\n"
                 + "\n".join(extra_lines)
+                + f"\n\n📅 已写入数据库，可前往 [时间表](/schedule?date={slot['date']}) 查看该时段状态变化。"
             )
             slots.clear()
         except ValueError as e:
