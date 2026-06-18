@@ -67,8 +67,6 @@ web/                # Flask 模板（templates）+ 静态资源（static）
 .claude/skills/     # Claude Code 开发期辅助 skill
 ```
 
-> 注：`ui/` 为早期 Streamlit 多页面设计，已被 Flask（`app.py` + `web/`）替代，保留仅作参考。
-
 ## 仓库信息
 
 - 远程仓库：<https://github.com/xiaowenhao404/Grad-School-Agent>

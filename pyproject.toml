@@ -1,7 +1,7 @@
 [project]
 name = "grad-school-agent"
 version = "0.1.0"
-description = "申研选校预约系统 — 多 Agent + Hybrid RAG + Streamlit"
+description = "申研选校预约系统 — 多 Agent + Hybrid RAG + Flask"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 authors = [{ name = "xiaowenhao404" }]
