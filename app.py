@@ -359,14 +359,13 @@ def api_program_detail(pid: int):
     return jsonify(p)
 
 
-# ── MCP-like tools 服务（演示项目内置的 MCP-like server） ────────────────────
+# ── 进程内工具注册中心的 HTTP 视图（便于脱离 UI 调试工具） ──────────────────
+# 注意：这两个端点是普通 REST，不是 MCP 协议本身。
+# 标准 MCP Server（JSON-RPC over stdio）在 src/mcp_server/，与这里复用同一批工具实现。
 
 @app.route("/api/mcp/tools")
 def api_mcp_list_tools():
-    """**MCP 标准接口**：返回 server 暴露的所有工具的 schema 列表。
-
-    用法等同 Anthropic MCP SDK 的 `mcp.list_tools()`。
-    """
+    """返回注册中心里所有工具的 schema 列表（等价于 MCP 的 tools/list 载荷）。"""
     from src.tools.registry import registry, autoload_tools
     autoload_tools()
     return jsonify({
@@ -378,10 +377,7 @@ def api_mcp_list_tools():
 
 @app.route("/api/mcp/call/<name>", methods=["POST"])
 def api_mcp_call_tool(name: str):
-    """**MCP 标准接口**：调用指定工具并返回结果。
-
-    用法等同 Anthropic MCP SDK 的 `mcp.call_tool(name, arguments)`。
-    """
+    """调用指定工具并返回结果（等价于 MCP 的 tools/call 载荷）。"""
     from src.tools.registry import registry, autoload_tools
     autoload_tools()
     args = request.json or {}

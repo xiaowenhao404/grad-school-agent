@@ -1,15 +1,18 @@
-"""工具注册中心（MCP-like 协议）。
+"""工具注册中心（进程内 MCP-like 调用层）。
 
-本项目实现了一个**轻量级 MCP（Model Context Protocol）兼容**的工具注册与调用层。
-对外暴露 Anthropic MCP 标准的几个核心 API：
+本模块是工具实现的**唯一注册处**，对外暴露 MCP 风格的两个核心 API：
 - `list_tools()` → 返回 `[{name, description, inputSchema}, ...]`
 - `call_tool(name, **args)` → 同步调用对应工具并返回 dict
 
 设计要点：
-- in-process 模式：与 Flask 同进程，避免 stdio 序列化开销
-- 标准 MCP server 兼容点：`list_tools()`/`call_tool()` 接口与 Anthropic MCP Python SDK
-  完全一致，未来可零改造升级为独立进程 + stdio transport（即真正的 MCP server）
+- in-process 模式：与 Flask 同进程，供 LangGraph Agent 直接调用，避免序列化开销；
+  这不是 MCP 协议本身（没有 JSON-RPC 帧、没有 transport），故标注 `mcp-like/0.1`
 - 含 JSON Schema 描述，可供 LLM function-calling 直接消费
+
+**真正的标准 MCP Server 见 `src/mcp_server/`**：它基于官方 mcp Python SDK，
+以 JSON-RPC over stdio 对外服务，并且直接复用本注册中心里的同一批函数实现
+（工具名/描述/参数说明都取自 `list_tools()`）。因此新增工具只需在这里注册一次，
+两条暴露路径会同时生效。
 
 详见 DEV_SPEC.md 3.3 节。
 """

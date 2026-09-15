@@ -54,6 +54,21 @@
 - **Agent prompts**：`config/prompts/*.txt`，占位符用 `{xxx}` —— 用 `BaseAgent._render_prompt(**kw)` 渲染（不是 jinja2）
 - **新 Repository 方法**：放 `src/db/repositories/`，所有 method 用 `with self._s() as s` 上下文管理 session
 - **新 API 路由**：放 `app.py`，遵循 `/api/<resource>/<action>` 命名
+- **新外部工具**：写在 `src/tools/<name>_tool.py` 并 `registry.register(fn)`，再在 `src/tools/registry.py` 的 `_TOOL_SCHEMAS` 补 JSON Schema —— **只需这一步**，进程内调用与标准 MCP Server 会同时暴露它（`src/mcp_server/server.py` 从 `registry.list_tools()` 动态构建，不要在 MCP 层再写一份实现）
+
+---
+
+## 工具层的两条暴露路径
+
+同一份工具实现（`src/tools/*_tool.py`）对外有两条路径，改动时两边都要顾及：
+
+1. **进程内 `ToolRegistry`**（`src/tools/registry.py`）：Agent 在 Flask 进程里直接 `registry.call_tool(...)`；另有 `GET /api/mcp/tools`、`POST /api/mcp/call/<name>` 两个 HTTP 端点便于调试。**这是 Agent 在用的路径，改动要保持向后兼容。**
+2. **标准 MCP Server**（`src/mcp_server/`）：基于官方 `mcp` Python SDK（2.x，v1 的 `FastMCP` 已更名为 `MCPServer`），JSON-RPC over stdio，供 Claude Desktop / Cursor / MCP Inspector 等外部 MCP Client 接入。
+
+启动：`uv run python -m src.mcp_server`（stdout 被 JSON-RPC 帧独占，**任何日志必须走 stderr**，一条 `print()` 就会破坏协议帧）。
+
+验证：`uv run --extra dev pytest tests/unit/test_mcp_server.py tests/integration/test_mcp_stdio.py`
+（后者会真的起子进程走完 initialize / tools/list / tools/call）。
 
 ---
 

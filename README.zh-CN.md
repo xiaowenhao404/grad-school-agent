@@ -13,7 +13,7 @@
 
 申研本质上是一个披着对话外衣的信息检索问题：申请要求写在政策文档里，候选项目躺在关系表里，而老师的日程又在另一个地方。单一的检索增强对话机器人只能把第一类问题处理好，另外两类都会做砸。
 
-本项目用 LangGraph 的 `StateGraph` 把工作拆给 5 个 Agent。分类器把每一轮输入路由到咨询 Agent（文档问答）、选校 Agent（结构化过滤 + 语义重排）、预约 Agent（6 阶段槽位填充状态机）或行为分析 Agent（偏好画像），并拒绝与业务无关的请求。检索走 Hybrid（BM25 + 稠密向量，用 RRF 融合），工具调用统一经过一个 MCP 兼容的注册中心，图中每一步都通过 SSE（Server-Sent Events，服务器推送事件）流式送到浏览器——推理路径是看得见的，而不是靠想象的。
+本项目用 LangGraph 的 `StateGraph` 把工作拆给 5 个 Agent。分类器把每一轮输入路由到咨询 Agent（文档问答）、选校 Agent（结构化过滤 + 语义重排）、预约 Agent（6 阶段槽位填充状态机）或行为分析 Agent（偏好画像），并拒绝与业务无关的请求。检索走 Hybrid（BM25 + 稠密向量，用 RRF 融合），三个外部工具只写一份实现、对外有两条暴露路径——进程内直接供 Agent 调用，以及一个标准 MCP（Model Context Protocol，模型上下文协议）stdio server 供任意外部 MCP Client 接入——图中每一步都通过 SSE（Server-Sent Events，服务器推送事件）流式送到浏览器——推理路径是看得见的，而不是靠想象的。
 
 这是一个自然语言处理课程项目，因此范围刻意收敛为本地优先：SQLite、落盘的 Chroma、本地 embedding 模型，`uv sync` 之后即可运行。不涉及部署、CI 和压测。
 
@@ -22,7 +22,7 @@
 - **8 节点 `StateGraph` + 5 路条件边** —— `pre_hook` → `classifier` → `{consultant, school, appointment, behavior, reject}` 之一 → `post_hook` → `END`（`src/graph/supervisor.py`），偏好记忆的 hook 是图上的节点，而不是写在各 Agent 内部的调用。
 - **Hybrid 检索 + RRF 融合** —— jieba 分词后的 BM25Okapi 与 Chroma 中的 BGE-small-zh-v1.5 稠密向量各召回 20 条，按 `1/(k + rank)`（`k = 60`）融合后取 Top-5（`src/rag/retrieval/hybrid_search.py`、`config/settings.yaml`）。
 - **两段式项目检索** —— 先用参数化 SQL 在 `school_programs` 与 `schools` 的连接上筛出满足硬约束的候选集，再把语义重排*限制在*该集合内，通过 Chroma 的 `where={"program_id": {"$in": [...]}}` 实现（`src/db/repositories/school_repo.py:97`、`src/agents/school_selection_agent.py:180`）。
-- **MCP 兼容工具层** —— 进程内的 `ToolRegistry` 暴露带 JSON Schema `inputSchema` 的 `list_tools()` / `call_tool()`，内置 3 个工具，并通过两个 HTTP 端点（`GET /api/mcp/tools`、`POST /api/mcp/call/<name>`）对外镜像 MCP SDK 的接口形态（`src/tools/registry.py`）。
+- **一份实现、两种暴露方式的工具层** —— 3 个工具是普通 Python 函数，注册在进程内的 `ToolRegistry` 上（`list_tools()` / `call_tool()` + JSON Schema，另有 `GET /api/mcp/tools`、`POST /api/mcp/call/<name>` 两个 HTTP 端点便于查看）。同时，一个基于官方 `mcp` Python SDK 的**真正的 MCP Server**（`src/mcp_server/server.py`）直接 import 这同一批函数，以 JSON-RPC over stdio 对外提供服务——外部 MCP Client（Claude Desktop / Cursor / MCP Inspector）看到的工具名、描述与 schema，与 Agent 内部看到的完全一致。
 - **6 阶段预约状态机 + 跨请求持久化** —— `collect_preferences` → `show_candidates` → `show_slots` → `confirm` → `ask_mode` → `done`，每轮结束后序列化写入独立的 `conversation_state` 表（`src/agents/appointment_agent.py:54`、`src/db/repositories/conversation_state_repo.py`）。
 - **SSE 链路可观测 + 分层降级** —— 图在工作线程上运行，请求线程持续抽取共享 trace 列表并每 1 秒发一次心跳；稀疏索引、向量库、LLM 三处失败各自降级为更窄的路径，而不是抛异常（`src/services/chat_service.py:92`）。
 
@@ -83,12 +83,17 @@ flowchart TB
         Sparse --> RRF
     end
 
-    subgraph Tools["MCP-compatible layer - src/tools/registry.py"]
-        TR["ToolRegistry<br/>list_tools / call_tool + JSON Schema"]
+    subgraph Tools["Tool layer - one implementation, two exposures"]
+        TR["ToolRegistry - in-process<br/>src/tools/registry.py<br/>list_tools / call_tool + JSON Schema"]
         TR --- T1["currency_convert<br/>open.er-api.com"]
         TR --- T2["weather_query<br/>wttr.in"]
         TR --- T3["tuition_estimate"]
+        MCPS["MCPServer - standard MCP<br/>src/mcp_server/server.py<br/>JSON-RPC over stdio"]
+        MCPS -->|"imports the same functions"| TR
     end
+
+    ExtMCP["External MCP clients<br/>Claude Desktop / Cursor / Inspector"]
+    ExtMCP -->|"stdio JSON-RPC"| MCPS
 
     subgraph Store["Storage"]
         SQL[("SQLite - 10 tables<br/>src/db/models.py")]
@@ -166,7 +171,7 @@ uv run python app.py
 
 非敏感的默认参数（chunk 大小、`rrf_k`、各级 top-k、候选数量上限）放在 `config/settings.yaml`，不在 `.env` 里。
 
-MCP 兼容工具服务可以脱离 UI 单独验证：
+进程内工具注册中心可以脱离 UI 直接用 HTTP 查看：
 
 ```bash
 curl http://127.0.0.1:5000/api/mcp/tools
@@ -176,7 +181,46 @@ curl -X POST http://127.0.0.1:5000/api/mcp/call/currency_convert \
      -d '{"amount": 60000, "from_currency": "USD", "to_currency": "CNY"}'
 ```
 
-测试：`uv run pytest` —— `tests/unit/` 下 11 个文件共 36 个单元测试，覆盖 RRF 融合、切分器、chunk 构建、各 Repository、分类器与 post-hook 合并。
+### 启动标准 MCP Server
+
+同样这 3 个工具也以标准 MCP Server 的形式经 stdio 对外提供。它与 Flask 应用是两个独立进程，不需要 Web 服务在跑：
+
+```bash
+uv run python -m src.mcp_server
+```
+
+它在 stdin/stdout 上讲 JSON-RPC，所以在终端里直接运行看起来像「卡住了」——这是正常现象，应该用 MCP Client 连它。`tuition_estimate` 要读 `data/grad_school.db`，因此工作目录必须是仓库根目录。
+
+在 Claude Desktop（`claude_desktop_config.json`）或 Cursor（`.cursor/mcp.json`）中注册（两者配置格式相同）：
+
+```json
+{
+  "mcpServers": {
+    "grad-school-tools": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/Grad-School-Agent", "python", "-m", "src.mcp_server"],
+      "env": { "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1" }
+    }
+  }
+}
+```
+
+如果 Client 的 `PATH` 里没有 `uv`，直接指向项目虚拟环境里的解释器：
+
+```json
+{
+  "mcpServers": {
+    "grad-school-tools": {
+      "command": "C:\\path\\to\\Grad-School-Agent\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "C:\\path\\to\\Grad-School-Agent",
+      "env": { "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1" }
+    }
+  }
+}
+```
+
+测试：`uv run --extra dev pytest` —— `tests/unit/` 下 12 个文件共 39 个单元测试，覆盖 RRF 融合、切分器、chunk 构建、各 Repository、分类器、post-hook 合并，以及 MCP Server 暴露的工具面；另有 `tests/integration/` 下 1 个集成测试，会把 MCP Server 作为真实子进程拉起，走完 `initialize` / `tools/list` / `tools/call` 三次 stdio 往返。
 
 ## Project Structure（目录结构）
 
@@ -202,8 +246,11 @@ src/
 │   ├── collections.py          # 3 个 Chroma collection，cosine 空间
 │   ├── ingestion/              # loader、RecursiveCharacterTextSplitter、Chroma + BM25 构建
 │   └── retrieval/              # 稠密、稀疏、RRF 融合、带缓存的工厂
+├── mcp_server/
+│   ├── server.py               # 标准 MCP Server（官方 mcp SDK），stdio transport
+│   └── __main__.py             # python -m src.mcp_server
 ├── tools/
-│   ├── registry.py             # MCP 兼容的 ToolRegistry + JSON Schema 表
+│   ├── registry.py             # 进程内 ToolRegistry + JSON Schema 表
 │   ├── currency_tool.py        # open.er-api.com，1 小时缓存，静态回退表
 │   ├── weather_tool.py         # wttr.in -> OpenWeather -> unavailable，10 分钟缓存
 │   └── tuition_tool.py         # 年学费 x 学年数，并做汇率换算
@@ -221,7 +268,8 @@ data/
 ├── seed/                       # 50 所学校、70 个项目、20 位老师、840 个时间槽
 └── raw_docs/internal/          # 25 篇中文知识库文档（签证、服务、文书）
 docs/DB_SCHEMA.md               # 与 models.py 保持同步的 schema 参考
-tests/unit/                     # 36 个测试
+tests/unit/                     # 39 个测试
+tests/integration/              # 对真实子进程的 MCP stdio 往返测试
 ```
 
 ## Design Notes（关键设计决策）
@@ -234,7 +282,7 @@ tests/unit/                     # 36 个测试
 
 **用独立状态表，而不是 LangGraph 的 checkpoint。** 预约 Agent 是一台跨 HTTP 请求的状态机：第 *n* 轮列出三位候选，第 *n+1* 轮的输入就是一个字符 `2`。LangGraph 自带的 checkpointer 会持久化整个 `GraphState`，包括完整消息列表和所有检索到的 chunk。而真正需要跨轮存活的只有两个字段，所以 `conversation_state` 就只以 `conversation_id` 为键、用 JSON 文本存这两个字段（`src/db/models.py:88`），`ChatService` 在每次 invoke 前读、后写。这让持久化载荷保持小且人眼可读，代价是这一次手动保存绝不能忘——这个 bug 类别真实到被专门写进了项目的 `CLAUDE.md`。还有一个额外收益：因为阶段信息在图之外是已知的，分类器可以被*告知*用户当前处在哪个阶段，这正是 `_build_stage_hint` 注入路由 prompt 的内容，使得一个孤立的序号不会被误判为无关请求。
 
-**MCP 形态的工具层，但跑在进程内。** 该注册中心刻意对齐 Anthropic MCP SDK 的接口形态——`list_tools()` 返回 `{name, description, inputSchema}`，`call_tool(name, **args)` 返回 dict——但运行在 Flask 进程内部，而非通过 stdio。真正的 MCP 传输能换来进程隔离与被其他客户端复用，代价是多一个进程、每次调用都要序列化、以及生命周期管理，而这些本应用都不需要。真正有价值的是接口兼容性：这三个工具可以被原样搬进独立的 stdio server，调用方一行都不用改。代码里对此也做了诚实标注——`PROTOCOL_VERSION = "mcp-like/0.1"`——而不是声称完整符合 MCP。
+**一份工具实现，两条暴露路径。** Agent 走进程内调用：在 Flask 进程里直接 `ToolRegistry.call_tool(name, **args)`，无序列化、无第二个进程、无生命周期管理——对本应用自身的流量来说这是正确的取舍，但它也意味着仓库之外的任何东西都用不了这些工具。因此同一批函数又被一个真正的 MCP Server（`src/mcp_server/server.py`，基于官方 `mcp` Python SDK）以 JSON-RPC over stdio 对外提供。保证两条路径不失真的规则是：MCP 层不持有任何业务逻辑——它从注册中心取出实现（`registry.get(name)`），工具名、描述与参数说明统一来自 `registry.list_tools()`；于是用 `registry.register` 新增一个工具，两条路径会同时暴露它，不存在第二份副本可供漂移。MCP 路径上的入参校验由 SDK 从真实函数签名推导，这让 schema 不一致表现为一条测试失败，而不是运行期的意外（`tests/unit/test_mcp_server.py`）。残留成本是对 SDK 形态的硬依赖：`mcp` 2.x 已把 v1 的 `FastMCP` 更名为 `MCPServer`，本实现按 2.x 编写。
 
 **降级，但绝不 500。** 每个外部依赖都有明确定义的失败模式，且 trace 会说清楚触发了哪一条。`bm25.pkl` 缺失或损坏时稀疏检索返回 `[]`，Hybrid 退化为纯稠密；选校 Agent 里 Chroma 失败则回退到 SQL 顺序；`currency_convert` 回退到 `settings.yaml` 里的静态汇率表；`weather_query` 依次尝试 wttr.in、OpenWeather，都失败则返回 `source: "unavailable"`；LLM 客户端仅对连接、超时、限流与 5xx 错误做 4 次指数退避重试，最终失败时往 trace 写一条告警而不是抛异常。代价是存在静默降级的可能——纯稠密的回答在用户眼里和 Hybrid 的一模一样，这正是每处降级都要发一条 trace 的原因。
 
@@ -253,7 +301,7 @@ tests/unit/                     # 36 个测试
 | 知识库文档 | 25 | `data/raw_docs/internal/*.md` |
 | SQLite 表 | 10 | `src/db/models.py` |
 | Chroma collection | 3 | `src/rag/collections.py` |
-| 单元测试 | 36 | `tests/unit/` |
+| 单元测试 | 39 | `tests/unit/` |
 
 尚未运行任何检索或端到端准确率基准测试。`.claude/skills/grad-school-eval/SKILL.md` 勾勒了 golden set 与 LLM-as-judge 的评估方案，但仓库中既没有提交 golden set，也不存在任何评分结果——因此这里不报告任何指标。
 
@@ -266,7 +314,8 @@ tests/unit/                     # 36 个测试
 - **阶段转移依赖正则与关键词匹配。** 时段选择用 `re.search(r"[1-5]", ...)`，会面形式用关键词列表匹配，联系方式用手机号/微信正则。对演示流程足够稳健，对自由表述则较脆弱。
 - **embedding 模型未随仓库分发。** `models/` 已被 gitignore（BGE 检查点在磁盘上约 180 MB）；在本地下载之前检索会失败。
 - **Chroma 的 metadata 过滤被部分重实现。** 稀疏结果在 Python 侧由 `_filter_by_where` 过滤，仅支持 `$in` 与等值——与 Chroma 自身的过滤语义存在偏离，一旦用到更丰富的操作符就会暴露。
-- **工具调用是硬编码的，不由 LLM 选择。** `inputSchema` 已是 MCP 形态、可直接用于 function calling，但各 Agent 是在固定位置调用 `registry.call_tool(...)`，而非让模型自行挑选工具。
+- **应用内的工具调用是硬编码的，不由 LLM 选择。** schema 已可直接用于 function calling，外部 MCP Client 接入后**确实**是由模型自行挑选工具；但在本应用内部，各 Agent 仍是在固定位置调用 `registry.call_tool(...)`，没有把工具选择权交给 LLM。
+- **MCP Server 只暴露 tools。** 没有 resources、prompts、sampling、elicitation，传输层也只有 stdio 一种。同时没有鉴权——对本地拉起的子进程没问题，对托管部署则不够。
 - **缺少 LICENSE 文件。** `pyproject.toml` 声明为 MIT，但许可证正文未提交。
 
 ## Acknowledgements（致谢与自研增量）
@@ -276,10 +325,10 @@ tests/unit/                     # 36 个测试
 在把骨架迁移到新领域之外，本项目新增的部分是：
 
 - **`SchoolSelectionAgent`** 及其背后的「SQL 硬过滤 → 语义重排」两段式检索策略，包括 `schools` / `school_programs` 父子表 schema。
-- **MCP 兼容工具层** —— 带 `list_tools()` / `call_tool()` 的 `ToolRegistry`、JSON Schema 描述，以及对外暴露它的两个 HTTP 端点。
+- **工具层及其两条暴露路径** —— 带 `list_tools()` / `call_tool()` 的 `ToolRegistry`、JSON Schema 描述与 HTTP 端点，以及把同一批函数重新对外提供的标准 stdio MCP Server。
 - **Runtime Skills 插件机制** —— `BaseRuntimeSkill`、自动发现的 `SkillRegistry`，以及 prompt 期的上下文注入。
 - **SSE 可观测链路** —— 逐节点的 trace 发射、带心跳的多线程图执行，以及浏览器侧的工作流视图。
 - **Hybrid RAG** —— BM25 + 稠密向量 + RRF 的检索栈，配合本地 BGE embedding。
 - **`conversation_state`** —— 为多轮预约状态机提供的跨请求持久化。
 
-`DEV_SPEC.md` 是 v1.0 设计稿，多处已被实现推翻：它写的是 Streamlit，实际代码是 Flask + Waitress；它写 7 张表，实际是 10 张；它声明本期不实现 MCP，而兼容层已经存在。两者冲突时，以代码为准。
+`DEV_SPEC.md` 是 v1.0 设计稿，多处已被实现推翻：它写的是 Streamlit，实际代码是 Flask + Waitress；它写 7 张表，实际是 10 张；它声明本期不实现 MCP，而标准 stdio MCP Server 已经存在。两者冲突时，以代码为准。

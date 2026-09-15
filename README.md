@@ -13,7 +13,7 @@ A LangGraph multi-agent assistant that answers study-abroad questions, shortlist
 
 Applying to graduate school is an information-retrieval problem wearing a conversation's clothes: the requirements live in policy documents, the candidate programs live in a relational table, and the advisor's calendar lives somewhere else again. A single retrieval-augmented chatbot handles the first of those three well and the other two badly.
 
-This project splits the work across five agents orchestrated by a LangGraph `StateGraph`. A classifier routes each turn to a consultant (document QA), a school-selection agent (structured filtering plus semantic reranking), an appointment agent (a six-stage slot-filling state machine), or a behaviour agent (preference profile) — and rejects out-of-scope requests. Retrieval is hybrid (BM25 + dense, fused by RRF), tool calls go through an MCP-compatible registry, and every step of the graph streams to the browser over SSE so the reasoning path is visible rather than implied.
+This project splits the work across five agents orchestrated by a LangGraph `StateGraph`. A classifier routes each turn to a consultant (document QA), a school-selection agent (structured filtering plus semantic reranking), an appointment agent (a six-stage slot-filling state machine), or a behaviour agent (preference profile) — and rejects out-of-scope requests. Retrieval is hybrid (BM25 + dense, fused by RRF), the three external tools are written once and exposed twice — in-process to the agents and over a standard MCP stdio server to any external MCP client — and every step of the graph streams to the browser over SSE so the reasoning path is visible rather than implied.
 
 It was built as an NLP coursework project, so the scope is deliberately local-first: SQLite, on-disk Chroma, a local embedding model, `uv sync` and run. No deployment, no CI, no load testing.
 
@@ -22,7 +22,7 @@ It was built as an NLP coursework project, so the scope is deliberately local-fi
 - **8-node `StateGraph` with a 5-way conditional route** — `pre_hook` → `classifier` → one of `{consultant, school, appointment, behavior, reject}` → `post_hook` → `END` (`src/graph/supervisor.py`), with the preference-memory hooks as graph nodes rather than agent-internal calls.
 - **Hybrid retrieval with RRF** — BM25Okapi over jieba tokens and BGE-small-zh-v1.5 dense vectors in Chroma, each returning 20 candidates, fused by `1/(k + rank)` with `k = 60` down to a top-5 (`src/rag/retrieval/hybrid_search.py`, `config/settings.yaml`).
 - **Two-stage program retrieval** — parameterized SQL over `school_programs` joined to `schools` produces a hard-constrained candidate set, then semantic reranking runs *inside* that set via a Chroma `where={"program_id": {"$in": [...]}}` filter (`src/db/repositories/school_repo.py:97`, `src/agents/school_selection_agent.py:180`).
-- **MCP-compatible tool layer** — an in-process `ToolRegistry` exposing `list_tools()` / `call_tool()` with JSON Schema `inputSchema`, three registered tools, and two HTTP endpoints (`GET /api/mcp/tools`, `POST /api/mcp/call/<name>`) that mirror the MCP SDK surface (`src/tools/registry.py`).
+- **Tool layer with two exposures, one implementation** — the three tools are plain Python functions registered in an in-process `ToolRegistry` (`list_tools()` / `call_tool()` plus JSON Schema, with `GET /api/mcp/tools` and `POST /api/mcp/call/<name>` for HTTP inspection). A real MCP server built on the official `mcp` Python SDK (`src/mcp_server/server.py`) *imports those same functions* and serves them as JSON-RPC over stdio, so an external MCP client — Claude Desktop, Cursor, MCP Inspector — sees exactly the tool names, descriptions and schemas the agents see.
 - **Six-stage appointment state machine with cross-request persistence** — `collect_preferences` → `show_candidates` → `show_slots` → `confirm` → `ask_mode` → `done`, serialized to a dedicated `conversation_state` table after every turn (`src/agents/appointment_agent.py:54`, `src/db/repositories/conversation_state_repo.py`).
 - **SSE trace streaming with layered fallbacks** — the graph runs on a worker thread while the request thread drains a shared trace list, emitting a heartbeat every 1s; sparse-index, vector-store and LLM failures each degrade to a narrower path instead of raising (`src/services/chat_service.py:92`).
 
@@ -83,12 +83,17 @@ flowchart TB
         Sparse --> RRF
     end
 
-    subgraph Tools["MCP-compatible layer - src/tools/registry.py"]
-        TR["ToolRegistry<br/>list_tools / call_tool + JSON Schema"]
+    subgraph Tools["Tool layer - one implementation, two exposures"]
+        TR["ToolRegistry - in-process<br/>src/tools/registry.py<br/>list_tools / call_tool + JSON Schema"]
         TR --- T1["currency_convert<br/>open.er-api.com"]
         TR --- T2["weather_query<br/>wttr.in"]
         TR --- T3["tuition_estimate"]
+        MCPS["MCPServer - standard MCP<br/>src/mcp_server/server.py<br/>JSON-RPC over stdio"]
+        MCPS -->|"imports the same functions"| TR
     end
+
+    ExtMCP["External MCP clients<br/>Claude Desktop / Cursor / Inspector"]
+    ExtMCP -->|"stdio JSON-RPC"| MCPS
 
     subgraph Store["Storage"]
         SQL[("SQLite - 10 tables<br/>src/db/models.py")]
@@ -166,7 +171,7 @@ Key settings in `.env` (template in `.env.example`):
 
 Non-secret defaults (chunk size, `rrf_k`, top-k values, candidate limits) live in `config/settings.yaml`, not in `.env`.
 
-The MCP-compatible tool server can be exercised without the UI:
+The in-process tool registry can be inspected over HTTP without the UI:
 
 ```bash
 curl http://127.0.0.1:5000/api/mcp/tools
@@ -176,7 +181,46 @@ curl -X POST http://127.0.0.1:5000/api/mcp/call/currency_convert \
      -d '{"amount": 60000, "from_currency": "USD", "to_currency": "CNY"}'
 ```
 
-Tests: `uv run pytest` — 36 unit tests across 11 files in `tests/unit/`, covering RRF fusion, the splitter, chunk builders, repositories, the classifier and the post-hook merge.
+### Running the MCP server
+
+The same three tools are also served as a standard MCP server over stdio. It is a separate process from the Flask app and does not need the web server running:
+
+```bash
+uv run python -m src.mcp_server
+```
+
+It speaks JSON-RPC on stdin/stdout, so running it in a terminal looks like it hangs — that is correct. Point an MCP client at it instead. `tuition_estimate` reads `data/grad_school.db`, so the working directory must be the repository root.
+
+To register it with Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`), which share the same schema:
+
+```json
+{
+  "mcpServers": {
+    "grad-school-tools": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/Grad-School-Agent", "python", "-m", "src.mcp_server"],
+      "env": { "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1" }
+    }
+  }
+}
+```
+
+If `uv` is not on the client's `PATH`, call the project venv's interpreter directly instead:
+
+```json
+{
+  "mcpServers": {
+    "grad-school-tools": {
+      "command": "C:\\path\\to\\Grad-School-Agent\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "C:\\path\\to\\Grad-School-Agent",
+      "env": { "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1" }
+    }
+  }
+}
+```
+
+Tests: `uv run --extra dev pytest` — 39 unit tests across 12 files in `tests/unit/`, covering RRF fusion, the splitter, chunk builders, repositories, the classifier, the post-hook merge and the MCP server's tool surface, plus one integration test in `tests/integration/` that launches the MCP server as a real subprocess and drives `initialize` / `tools/list` / `tools/call` over stdio.
 
 ## Project Structure
 
@@ -202,8 +246,11 @@ src/
 │   ├── collections.py          # 3 Chroma collections, cosine space
 │   ├── ingestion/              # loaders, RecursiveCharacterTextSplitter, Chroma + BM25 build
 │   └── retrieval/              # dense, sparse, RRF fusion, cached factory
+├── mcp_server/
+│   ├── server.py               # standard MCP server (official mcp SDK), stdio transport
+│   └── __main__.py             # python -m src.mcp_server
 ├── tools/
-│   ├── registry.py             # MCP-compatible ToolRegistry + JSON Schema table
+│   ├── registry.py             # in-process ToolRegistry + JSON Schema table
 │   ├── currency_tool.py        # open.er-api.com, 1h cache, static fallback table
 │   ├── weather_tool.py         # wttr.in -> OpenWeather -> unavailable, 10min cache
 │   └── tuition_tool.py         # per-year tuition x years, converted
@@ -221,7 +268,8 @@ data/
 ├── seed/                       # 50 schools, 70 programs, 20 teachers, 840 schedule slots
 └── raw_docs/internal/          # 25 Chinese knowledge-base documents (visa, service, writing)
 docs/DB_SCHEMA.md               # schema reference kept in sync with models.py
-tests/unit/                     # 36 tests
+tests/unit/                     # 39 tests
+tests/integration/              # MCP stdio round-trip against a real subprocess
 ```
 
 ## Design Notes
@@ -234,7 +282,7 @@ tests/unit/                     # 36 tests
 
 **A dedicated state table instead of LangGraph checkpointing.** The appointment agent is a state machine spread across HTTP requests: turn *n* lists three candidates, turn *n+1* is the single character `2`. LangGraph's own checkpointer would persist the entire `GraphState`, including the full message list and every retrieved chunk. Only two fields actually need to survive a turn, so `conversation_state` stores exactly those two as JSON text keyed by `conversation_id` (`src/db/models.py:88`), and `ChatService` loads before and saves after each invocation. This keeps the persisted payload small and human-inspectable, at the cost of a manual save that must not be forgotten — a bug class real enough that it is called out in the project's `CLAUDE.md`. A second consequence is useful: because the stage is known outside the graph, the classifier can be *told* what stage the user is in, which is what `_build_stage_hint` feeds into the routing prompt so that a bare ordinal is not reclassified as an off-topic request.
 
-**MCP-shaped tool layer, in-process.** The registry deliberately mirrors the Anthropic MCP SDK surface — `list_tools()` returning `{name, description, inputSchema}` and `call_tool(name, **args)` returning a dict — but runs inside the Flask process rather than over stdio. Real MCP transport would have bought process isolation and reuse by other clients, at the cost of a second process, serialization on every call, and lifecycle management, none of which this application needs. Interface compatibility is what matters: the same three tools could be lifted into a standalone stdio server without touching the call sites. This is signposted honestly in the code — `PROTOCOL_VERSION = "mcp-like/0.1"` — rather than claiming full MCP conformance.
+**Two exposures over one tool implementation.** The agents call tools in-process: `ToolRegistry.call_tool(name, **args)` inside the Flask process, no serialization, no second process, no lifecycle to manage. That is the right trade for the application's own traffic, but it makes the tools unusable by anything outside this repository. So the same functions are also served by a real MCP server (`src/mcp_server/server.py`) built on the official `mcp` Python SDK, speaking JSON-RPC over stdio. The rule that keeps the two paths honest is that the MCP layer owns no business logic: it resolves each implementation out of the registry (`registry.get(name)`) and takes names, descriptions and parameter documentation from `registry.list_tools()`, so registering a new tool with `registry.register` exposes it on both paths at once and there is no second copy to drift. Argument validation on the MCP path is derived by the SDK from the real function signature, which is what turns a schema mismatch into a test failure rather than a runtime surprise (`tests/unit/test_mcp_server.py`). The residual cost is a hard dependency on the SDK's shape: `mcp` 2.x renamed v1's `FastMCP` to `MCPServer`, and this code targets 2.x.
 
 **Degrade, never 500.** Every external dependency has a defined failure mode, and the trace says which one fired. A missing or corrupt `bm25.pkl` makes the sparse retriever return `[]` and the hybrid search becomes dense-only; a Chroma failure in the school agent falls back to SQL ordering; `currency_convert` falls back to a static rate table in `settings.yaml`; `weather_query` tries wttr.in, then OpenWeather, then reports `source: "unavailable"`; the LLM client retries four times with exponential backoff on connection, timeout, rate-limit and 5xx errors only, and a final failure writes a warning line into the trace instead of raising. The cost is that silent degradation is possible — a dense-only answer looks the same as a hybrid one to the user, which is precisely why every fallback emits a trace line.
 
@@ -253,7 +301,7 @@ All figures below come from `data/seed/*.json` and `data/raw_docs/internal/`, an
 | Knowledge-base documents | 25 | `data/raw_docs/internal/*.md` |
 | SQLite tables | 10 | `src/db/models.py` |
 | Chroma collections | 3 | `src/rag/collections.py` |
-| Unit tests | 36 | `tests/unit/` |
+| Unit tests | 39 | `tests/unit/` |
 
 No retrieval or end-to-end accuracy benchmark has been run. `.claude/skills/grad-school-eval/SKILL.md` sketches a golden-set and LLM-as-judge protocol, but no golden set is committed and no scores exist — so none are reported here.
 
@@ -266,7 +314,8 @@ No retrieval or end-to-end accuracy benchmark has been run. `.claude/skills/grad
 - **Stage transitions are driven by regex and keyword matching.** Slot selection uses `re.search(r"[1-5]", ...)`, meeting mode is matched on a keyword list, contact details on a phone/WeChat pattern. Robust for the demo flows, brittle for free-form phrasing.
 - **The embedding model is not vendored.** `models/` is gitignored (the BGE checkpoint is roughly 180 MB on disk); retrieval will fail until it is downloaded locally.
 - **Chroma metadata filtering is partly reimplemented.** Sparse results are filtered in Python by `_filter_by_where`, which supports only `$in` and equality — a divergence from Chroma's own filter semantics that will surface if richer operators are ever used.
-- **Tool calls are hard-wired, not LLM-selected.** `inputSchema` is MCP-shaped and function-calling ready, but the agents call `registry.call_tool(...)` at fixed points rather than letting the model choose a tool.
+- **In-app tool calls are hard-wired, not LLM-selected.** The schemas are function-calling ready and an external MCP client *does* let a model choose among them, but inside this application the agents call `registry.call_tool(...)` at fixed points rather than delegating tool choice to the LLM.
+- **The MCP server exposes tools only.** No resources, prompts, sampling or elicitation, and stdio is the only transport. There is also no authentication, which is fine for a locally launched subprocess and would not be for a hosted one.
 - **No LICENSE file.** `pyproject.toml` declares MIT, but the licence text is not committed.
 
 ## Acknowledgements
@@ -276,10 +325,10 @@ This project was refactored from the open-source **smart-appointment-ai-agent** 
 What was added here, beyond porting the skeleton to a new domain:
 
 - **`SchoolSelectionAgent`** and the two-stage SQL-then-semantic retrieval strategy behind it, including the `schools` / `school_programs` parent-child schema.
-- **The MCP-compatible tool layer** — `ToolRegistry` with `list_tools()` / `call_tool()`, JSON Schema descriptions, and the two HTTP endpoints that expose it.
+- **The tool layer and its two exposures** — `ToolRegistry` with `list_tools()` / `call_tool()`, JSON Schema descriptions and the HTTP endpoints, plus the standard stdio MCP server that re-serves the same functions to external clients.
 - **The Runtime Skills plugin mechanism** — `BaseRuntimeSkill`, the auto-discovering `SkillRegistry`, and prompt-time context injection.
 - **The SSE observability path** — per-node trace emission, threaded graph execution with heartbeats, and the browser-side workflow view.
 - **Hybrid RAG** — the BM25 + dense + RRF retrieval stack with local BGE embeddings.
 - **`conversation_state`** — cross-request persistence for the multi-turn appointment machine.
 
-`DEV_SPEC.md` is the v1.0 design document and has been overtaken by the implementation in several places: it specifies Streamlit where the code uses Flask + Waitress, seven tables where there are ten, and declares MCP out of scope where a compatible layer now exists. Where the two disagree, the code is authoritative.
+`DEV_SPEC.md` is the v1.0 design document and has been overtaken by the implementation in several places: it specifies Streamlit where the code uses Flask + Waitress, seven tables where there are ten, and declares MCP out of scope where a standard stdio MCP server now exists. Where the two disagree, the code is authoritative.
